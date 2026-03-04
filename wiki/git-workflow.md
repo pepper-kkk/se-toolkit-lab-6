@@ -78,10 +78,10 @@ Alternatively, the name of that branch (without `<` and `>`).
 
 [Create a PR](./github.md#create-a-pull-request-in-your-fork) from the branch [`<task-branch>`](#task-branch) to `main`. Replace:
 
-- `<repo-name>` with `se-toolkit-lab-<N>` where `<N>` is the number of the lab.
-- `<branch>` with `<task-branch>`.
-- [`<repo-owner-github-username>`] is `inno-se-toolkit`.
-- [`<your-github-username>`](./github.md#your-github-username) is your `GitHub` username.
+- [`<repo-name>`](./github.md#repo-name) with [`<lab-repo-name>`](./lab.md#lab-repo-name)
+- [`<branch>`](./git.md#branch) with [`<task-branch>`](./git-workflow.md#task-branch)
+- [`<repo-owner-github-username>`](./github.md#repo-owner-github-username) with `inno-se-toolkit`
+- [`<your-github-username>`](./github.md#your-github-username)
 
 ## Get a PR review
 

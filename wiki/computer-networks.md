@@ -59,13 +59,13 @@ An IP address (Internet Protocol address) is a numerical label assigned to each 
 
 It identifies the device and its location in the network.
 
-Example: `10.93.24.1` ([IPv4](#ipv4)).
+Example: `192.0.2.1` ([IPv4](#ipv4)).
 
 ### IPv4
 
 `IPv4` (Internet Protocol version 4) uses 32-bit addresses, written as four decimal numbers separated by dots.
 
-Example: `10.93.24.1`, `127.0.0.1`.
+Example: `192.0.2.1`, `127.0.0.1`.
 
 It supports approximately 4.3 billion unique addresses.
 

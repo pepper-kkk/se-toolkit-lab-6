@@ -9,6 +9,10 @@
 - [Switch to the `<branch>`](#switch-to-the-branch)
   - [Switch to the `<branch>` using the `VS Code Terminal`](#switch-to-the-branch-using-the-vs-code-terminal)
   - [Switch to the `<branch>` using `GitLens`](#switch-to-the-branch-using-gitlens)
+- [Switch to a new branch](#switch-to-a-new-branch)
+  - [Switch to a new branch using `GitHub`](#switch-to-a-new-branch-using-github)
+  - [Switch to a new branch using the `VS Code Terminal`](#switch-to-a-new-branch-using-the-vs-code-terminal)
+  - [Switch to a new branch using `GitLens`](#switch-to-a-new-branch-using-gitlens)
 - [Detect conflicts](#detect-conflicts)
 - [Resolve a merge conflict](#resolve-a-merge-conflict)
   - [Resolve a merge conflict using `VS Code`](#resolve-a-merge-conflict-using-vs-code)
@@ -38,13 +42,6 @@
 - [Push more commits](#push-more-commits)
   - [Push using the `VS Code Terminal`](#push-using-the-vs-code-terminal)
   - [Push using `GitLens`](#push-using-gitlens)
-- [Switch to an existing branch](#switch-to-an-existing-branch)
-  - [Switch to an existing branch using `VS Code Terminal`](#switch-to-an-existing-branch-using-vs-code-terminal)
-  - [Switch to an existing branch using `GitLens`](#switch-to-an-existing-branch-using-gitlens)
-- [Switch to a new branch](#switch-to-a-new-branch)
-  - [Switch to a new branch using `GitHub`](#switch-to-a-new-branch-using-github)
-  - [Switch to a new branch using the `VS Code Terminal`](#switch-to-a-new-branch-using-the-vs-code-terminal)
-  - [Switch to a new branch using `GitLens`](#switch-to-a-new-branch-using-gitlens)
 
 ## What is `Git` in `VS Code`
 
@@ -185,6 +182,53 @@ Docs:
 1. [Run using the `Command Palette`](./vs-code.md#run-a-command-using-the-command-palette):
    `GitLens: Git Switch to..`.
 2. [Select](./vs-code.md#select-an-option-from-a-list) the `<branch>`.
+
+## Switch to a new branch
+
+<!-- no toc -->
+- Method 1: [Switch to a new branch using `GitHub`](#switch-to-a-new-branch-using-github)
+- Method 2: [Switch to a new branch using the `VS Code Terminal`](#switch-to-a-new-branch-using-the-vs-code-terminal)
+- Method 3: [Switch to a new branch using `GitLens`](#switch-to-a-new-branch-using-gitlens)
+
+### Switch to a new branch using `GitHub`
+
+1. [Go to the repo](./github.md#go-to-your-fork).
+2. [Create a branch](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-a-branch-for-an-issue).
+3. Copy the command provided by `GitHub`.
+
+   It looks like this:
+
+   ```terminal
+   git fetch origin
+   git checkout <branch>
+   ```
+
+   Replace [`<branch>`](./git.md#branch).
+
+4. [Run the copied command using the `VS Code Terminal`](./vs-code.md#run-a-command-in-the-vs-code-terminal).
+
+### Switch to a new branch using the `VS Code Terminal`
+
+1. To create and switch to a new branch,
+
+   [run in the `VS Code Terminal`](./vs-code.md#run-a-command-in-the-vs-code-terminal):
+
+   ```terminal
+   git checkout -b <branch>
+   ```
+
+   Replace [`<branch>`](./git.md#branch).
+
+### Switch to a new branch using `GitLens`
+
+1. [Run using the `Command Palette`](./vs-code.md#run-a-command-using-the-command-palette):
+   `GitLens: Git Create Branch...`.
+2. [Select](./vs-code.md#select-an-option-from-a-list)
+   `main` as the base branch.
+3. Write the new branch name (let it be [`<branch>`](./git.md#branch)).
+4. Press `Enter` to confirm.
+5. [Select](./vs-code.md#select-an-option-from-a-list)
+   `Create & Switch to Branch`.
 
 ## Detect conflicts
 
@@ -539,61 +583,3 @@ See [Undo commit on the current branch](./gitlens.md#undo-a-commit-on-the-curren
 2. Click `GITLENS`.
 3. Click the `Commits` icon.
 4. Click the `Push` icon to the right of `COMMITS`.
-
-## Switch to an existing branch
-
-<!-- TODO -->
-
-### Switch to an existing branch using `VS Code Terminal`
-
-<!-- TODO fill in this section -->
-
-### Switch to an existing branch using `GitLens`
-
-<!-- TODO fill in this section -->
-
-## Switch to a new branch
-
-<!-- no toc -->
-- Method 1: [Switch to a new branch using `GitHub`](#switch-to-a-new-branch-using-github)
-- Method 2: [Switch to a new branch using the `VS Code Terminal`](#switch-to-a-new-branch-using-the-vs-code-terminal)
-- Method 3: [Switch to a new branch using `GitLens`](#switch-to-a-new-branch-using-gitlens)
-
-> [!IMPORTANT]
-> Replace the `<branch>` with the actual branch name.
-
-### Switch to a new branch using `GitHub`
-
-1. [Go to the repo](./github.md#go-to-your-fork).
-2. [Create a branch](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-a-branch-for-an-issue).
-3. Copy the command provided by `GitHub`.
-
-   It looks like this:
-
-   ```terminal
-   git fetch origin
-   git checkout <branch>
-   ```
-
-4. [Run the copied command using the `VS Code Terminal`](./vs-code.md#run-a-command-in-the-vs-code-terminal).
-
-### Switch to a new branch using the `VS Code Terminal`
-
-1. To create and switch to a new branch,
-
-   [run in the `VS Code Terminal`](./vs-code.md#run-a-command-in-the-vs-code-terminal):
-
-   ```terminal
-   git checkout -b <branch>
-   ```
-
-### Switch to a new branch using `GitLens`
-
-1. [Run using the `Command Palette`](./vs-code.md#run-a-command-using-the-command-palette):
-   `GitLens: Git Create Branch...`.
-2. [Select](./vs-code.md#select-an-option-from-a-list)
-   `main` as the base branch.
-3. Write `<branch>` to provide the new branch name.
-4. Press `Enter` to confirm.
-5. [Select](./vs-code.md#select-an-option-from-a-list)
-   `Create & Switch to Branch`.

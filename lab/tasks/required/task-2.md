@@ -294,7 +294,7 @@ Title: `[Task] Back-end Testing`
 
    Replace [`<task-branch>`](../../../wiki/git-workflow.md#task-branch).
 
-6. [Switch to `<task-branch>`](../../../wiki/git-vscode.md#switch-to-an-existing-branch-using-vs-code-terminal).
+6. [Switch to `<task-branch>`](../../../wiki/git-vscode.md#switch-to-the-branch-using-the-vs-code-terminal).
 
    Replace [`<task-branch>`](../../../wiki/git-workflow.md#task-branch).
 

@@ -16,7 +16,7 @@ Default values: [`.env.tests.e2e.example`](../.env.tests.e2e.example)
 
 The base [URL](./computer-networks.md#url) of the deployed API.
 
-Example: `http://10.93.24.1:42002`
+Example: `http://192.0.2.1:42002`
 
 ## `API_KEY`
 

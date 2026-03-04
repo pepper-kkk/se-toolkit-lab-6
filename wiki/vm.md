@@ -44,7 +44,7 @@ The name you chose when [creating the VM](#create-a-vm-using-the-subscription) (
 
 The [IP address](./computer-networks.md#ip-address) (without `<` and `>`) of [your VM](#your-vm) in the `UniversityStudent` [network](./computer-networks.md#what-is-a-network).
 
-Example: `10.93.24.1`.
+Example: `192.0.2.1`.
 
 See [Get the IP address of the VM](#get-the-ip-address-of-the-vm).
 
@@ -139,7 +139,7 @@ Complete these steps to create a VM:
 3. Go to `IP Address(es)`.
 4. You should see there `StudentsCourses01` - [`<your-vm-ip-address>`](#your-vm-ip-address).
 
-   Example: `StudentsCourses01` - `10.93.24.1`
+   Example: `StudentsCourses01` - `192.0.2.1`
 
 ## Connect to the VM
 

@@ -1,4 +1,4 @@
-# Add Front-end
+# Add Frontend
 
 <h4>Time</h4>
 
@@ -23,14 +23,17 @@ Finally, you will use an AI agent to add a new feature to the front-end.
     - [1.3.1. Navigate to the front-end project directory](#131-navigate-to-the-front-end-project-directory)
     - [1.3.2. Configure the environment for frontend](#132-configure-the-environment-for-frontend)
     - [1.3.3. Start the dev server](#133-start-the-dev-server)
-    - [1.3.2. Edit a source file and observe hot reload](#132-edit-a-source-file-and-observe-hot-reload)
+    - [1.3.4. Edit a source file and observe hot reload](#134-edit-a-source-file-and-observe-hot-reload)
+    - [1.3.5. Commit the changes](#135-commit-the-changes)
+    - [1.3.6. Transfer the changes to your VM](#136-transfer-the-changes-to-your-vm)
   - [1.4. Part B: Prod version](#14-part-b-prod-version)
-    - [1.4.1. Deploy the front-end to the VM](#141-deploy-the-front-end-to-the-vm)
+    - [1.4.1. Deploy the frontend to the VM](#141-deploy-the-frontend-to-the-vm)
     - [1.4.2. Verify in the browser](#142-verify-in-the-browser)
-  - [1.5. Part C: Modify the front-end with an AI agent](#15-part-c-modify-the-front-end-with-an-ai-agent)
+  - [1.5. Part C: Modify the frontend with an AI agent](#15-part-c-modify-the-frontend-with-an-ai-agent)
     - [1.5.1. Add a type filter](#151-add-a-type-filter)
     - [1.5.2. Verify in the dev server](#152-verify-in-the-dev-server)
-    - [1.5.3. Deploy the change to the VM](#153-deploy-the-change-to-the-vm)
+    - [1.5.3. Commit the changes](#153-commit-the-changes)
+    - [1.5.4. Deploy the frontend to your VM](#154-deploy-the-frontend-to-your-vm)
   - [1.6. Finish the task](#16-finish-the-task)
   - [1.7. Check the task using the autochecker](#17-check-the-task-using-the-autochecker)
 - [2. Acceptance criteria](#2-acceptance-criteria)
@@ -47,19 +50,23 @@ Title: `[Task] Add Front-end`
 
 ### 1.3. Part A: Dev version
 
-<!-- no toc -->
-- [1.3.1. Run the dev server](#131-run-the-dev-server)
-- [1.3.2. Edit a source file and observe hot reload](#132-edit-a-source-file-and-observe-hot-reload)
-
 > [!NOTE]
 > A dev server serves the front-end with hot reload: the browser updates automatically when you save a file.
 > This is for local development only — it is not meant to be deployed to production.
+
+Complete these steps:
+
+<!-- no toc -->
+1. [Navigate to the front-end project directory](#131-navigate-to-the-front-end-project-directory)
+2. [Configure the environment for frontend](#132-configure-the-environment-for-frontend)
+3. [Start the dev server](#133-start-the-dev-server)
+4. [Edit a source file and observe hot reload](#134-edit-a-source-file-and-observe-hot-reload)
 
 #### 1.3.1. Navigate to the front-end project directory
 
 > [!NOTE]
 > The dev server proxies API requests (e.g., `/items`) to the `VITE_API_TARGET` URL.
-> The API token is entered at runtime through the front-end UI — it is not stored in the `.env` file.
+> The [API key](../../../wiki/api.md#api-key) is entered at runtime through the front-end UI — it is not stored in the `frontend/.env.secret` file.
 
 1. [Open a new `VS Code Terminal`](../../../wiki/vs-code.md#open-a-new-vs-code-terminal).
 2. To navigate to the front-end project directory,
@@ -77,12 +84,12 @@ Title: `[Task] Add Front-end`
    [run in the `VS Code Terminal`](../../../wiki/vs-code.md#run-a-command-in-the-vs-code-terminal):
 
    ```terminal
-   cp .env.example .env
+   cp .env.example .env.secret
    ```
 
-2. [Open the file](../../../wiki/vs-code.md#open-the-file): [`frontend/.env`](../../../frontend/.env).
+2. [Open the file](../../../wiki/vs-code.md#open-the-file): `frontend/.env.secret`.
 
-3. Set `VITE_API_TARGET` to the URL of your back-end API, for example `http://<your-vm-ip-address>:<caddy-port>`.
+3. Set `VITE_API_TARGET` to the [URL](../../../wiki/computer-networks.md#url) of your back-end [API](../../../wiki/api.md#what-is-an-api): `http://<your-vm-ip-address>:<caddy-port>`.
 
    Replace:
 
@@ -90,6 +97,8 @@ Title: `[Task] Add Front-end`
    - [`<caddy-port>`](../../../wiki/caddy.md#caddy-port)
 
 4. To install dependencies,
+
+   <!-- TODO move to the setup? -->
 
    [run in the `VS Code Terminal`](../../../wiki/vs-code.md#run-a-command-in-the-vs-code-terminal):
 
@@ -110,31 +119,58 @@ Title: `[Task] Add Front-end`
    The output should be similar to this:
 
    ```terminal
-   Local: http://localhost:5173/
+   ➜  Local:   http://localhost:5173/
    ```
 
-2. Open the [URL](../) shown in the terminal output in a browser.
+2. Open the URL shown in the terminal output in a browser: <http://localhost:5173/>
 
-   Verify that the front-end loads and displays data from the API.
+   Verify that the front-end loads and asks for an API key.
 
-#### 1.3.2. Edit a source file and observe hot reload
+3. Log in to the app.
+
+   You should see a table with items.
+
+#### 1.3.4. Edit a source file and observe hot reload
 
 1. Open the file [`frontend/src/App.tsx`](../../../frontend/src/App.tsx) ([how to open a file](../../../wiki/vs-code.md#open-the-file)).
 
-2. Make a small visible change, for example change the `Items` heading text to something else.
+2. Fix the redundancy (it's already clear that it's the `Items` table):
+
+   ```tsx
+   <th>ItemType</th>
+   ```
+
+   with
+
+   ```tsx
+   <th>Type</th>
+   ```
 
 3. Save the file.
 
-   Verify that the text you changed updates in the browser without you refreshing the page.
+4. Verify that the text you changed updates in the browser without you refreshing the page.
 
-4. Undo the change (press `Ctrl+Z` until the heading is back to its original text) and save the file.
+> [!NOTE]
+> The dev server picks up the changes automatically — no rebuild is needed.
 
-   Verify that the browser shows the original heading.
+#### 1.3.5. Commit the changes
+
+1. [Commit changes](../../../wiki/git-workflow.md#commit-changes).
+
+   Use this commit message:
+
+   ```text
+   fix: change the column name from "ItemType" to "Type"
+   ```
+
+#### 1.3.6. Transfer the changes to your VM
+
+1. [Transfer the changes to your VM](./task-2.md#137-transfer-the-changes-to-your-vm) like in the Task 2.
 
 ### 1.4. Part B: Prod version
 
 <!-- no toc -->
-- [1.4.1. Deploy the front-end to the VM](#141-deploy-the-front-end-to-the-vm)
+- [1.4.1. Deploy the frontend to the VM](#141-deploy-the-frontend-to-the-vm)
 - [1.4.2. Verify in the browser](#142-verify-in-the-browser)
 
 > [!NOTE]
@@ -144,37 +180,9 @@ Title: `[Task] Add Front-end`
 >
 > The [`Caddyfile`](../../../wiki/caddy.md#caddyfile) routes API requests to the back-end and serves the front-end for all other paths.
 
-#### 1.4.1. Deploy the front-end to the VM
+#### 1.4.1. Deploy the frontend to the VM
 
-1. [Connect to your VM](../../../wiki/vm.md#connect-to-the-vm).
-
-2. To navigate to the project directory,
-
-   [run in the `VS Code Terminal`](../../../wiki/vs-code.md#run-a-command-in-the-vs-code-terminal):
-
-   ```terminal
-   cd se-toolkit-lab-4
-   ```
-
-3. To switch to the task branch,
-
-   [run in the `VS Code Terminal`](../../../wiki/vs-code.md#run-a-command-in-the-vs-code-terminal):
-
-   ```terminal
-   git switch <task-branch>
-   ```
-
-   Replace [`<task-branch>`](../../../wiki/git-workflow.md#task-branch).
-
-4. To pull the latest changes from `GitHub`,
-
-   [run in the `VS Code Terminal`](../../../wiki/vs-code.md#run-a-command-in-the-vs-code-terminal):
-
-   ```terminal
-   git pull
-   ```
-
-5. To rebuild and restart the `caddy` service,
+1. To rebuild and restart the `caddy` service,
 
    [run in the `VS Code Terminal`](../../../wiki/vs-code.md#run-a-command-in-the-vs-code-terminal):
 
@@ -182,29 +190,9 @@ Title: `[Task] Add Front-end`
    docker compose --env-file .env.docker.secret up --build caddy -d
    ```
 
-   The output should be similar to this:
-
-   ```terminal
-   [+] Building ...
-   ...
-   [+] Running 1/1
-    ✔ Container caddy  Started
-   ```
-
-   <details><summary>Troubleshooting</summary>
-
-   <h4>Container build fails</h4>
-
-   Check that the `frontend/` directory exists and contains a valid `Dockerfile`.
-
-   <h4>Port conflict (<code>port is already allocated</code>)</h4>
-
-   Stop the process that uses the port, then retry.
-
-   </details>
-
 > [!NOTE]
 > The `caddy` service uses a multi-stage `Dockerfile` ([`frontend/Dockerfile`](../../../frontend/Dockerfile)).
+>
 > Stage 1 builds the front-end (`npm run build`), and stage 2 copies the output into the `Caddy` image.
 > Rebuilding the container is how you deploy front-end changes — there is no need to copy files manually.
 
@@ -219,12 +207,13 @@ Title: `[Task] Add Front-end`
 
    Verify that the front-end loads and displays data from the API.
 
-### 1.5. Part C: Modify the front-end with an AI agent
+### 1.5. Part C: Modify the frontend with an AI agent
 
 <!-- no toc -->
 - [1.5.1. Add a type filter](#151-add-a-type-filter)
 - [1.5.2. Verify in the dev server](#152-verify-in-the-dev-server)
-- [1.5.3. Deploy the change to the VM](#153-deploy-the-change-to-the-vm)
+- [1.5.3. Commit changes](#153-commit-the-changes)
+- [1.5.4. Deploy the frontend to your VM](#154-deploy-the-frontend-to-your-vm)
 
 > [!NOTE]
 > The AI agent can read all front-end source files and find the right component to modify.
@@ -232,7 +221,7 @@ Title: `[Task] Add Front-end`
 
 #### 1.5.1. Add a type filter
 
-1. Open the AI agent in the `frontend/` directory.
+1. In `VS Code`, open the chat with a [coding agent](../../../wiki/coding-agents.md#what-is-a-coding-agent).
 
 2. Write a prompt that instructs the agent to add a dropdown that filters table rows by type. A good prompt tells the agent:
 
@@ -249,7 +238,7 @@ Title: `[Task] Add Front-end`
 
 3. Wait for the agent to make the changes.
 
-4. Review the changes the agent made. Verify that all of the following are true:
+4. Review the changes the agent made in [`frontend/src/App.tsx`](../../../frontend/src/App.tsx) ([how to open a file](../../../wiki/vs-code.md#open-the-file)). Verify that all of the following are true:
 
    - A `useState` hook tracks the selected type.
    - A `<select>` dropdown lists unique types derived from `items`, with an `All` option.
@@ -258,29 +247,14 @@ Title: `[Task] Add Front-end`
 
    If any of these are missing or incorrect, prompt the agent again to fix the specific issue.
 
-   <details><summary>Fallback: make the changes manually</summary>
-
-   If the AI agent is not available, make the changes manually:
-
-   1. Open the file [`frontend/src/App.tsx`](../../../frontend/src/App.tsx) ([how to open a file](../../../wiki/vs-code.md#open-the-file)).
-   2. Add a `useState` hook for the selected type, initialized to `'All'`.
-   3. Derive the list of unique types from `items`.
-   4. Add a `<select>` dropdown above the table that lists `All` and each unique type.
-   5. Filter the rows displayed in the table by the selected type.
-
-   </details>
-
 #### 1.5.2. Verify in the dev server
 
 1. Check that the dev server is still running (or restart it with `npm run dev`).
-2. Open the front-end in the browser.
+2. Open in the browser: <http://localhost:5173/>
 
    Verify that the filter dropdown appears above the table and filters rows correctly.
 
-> [!NOTE]
-> The dev server picks up the changes automatically — no rebuild is needed.
-
-#### 1.5.3. Deploy the change to the VM
+#### 1.5.3. Commit the changes
 
 1. [Commit changes](../../../wiki/git-workflow.md#commit-changes).
 
@@ -294,65 +268,12 @@ Title: `[Task] Add Front-end`
    - Filter table rows client-side by selected type
    ```
 
-2. [Push your changes](../../../wiki/git-workflow.md#push-commits).
-3. [Connect to your VM](../../../wiki/vm.md#connect-to-the-vm).
-4. To navigate to the project directory,
+#### 1.5.4. Deploy the frontend to your VM
 
-   [run in the `VS Code Terminal`](../../../wiki/vs-code.md#run-a-command-in-the-vs-code-terminal):
-
-   ```terminal
-   cd se-toolkit-lab-4
-   ```
-
-5. To fetch and checkout your task branch,
-
-   [run in the `VS Code Terminal`](../../../wiki/vs-code.md#run-a-command-in-the-vs-code-terminal):
-
-   ```terminal
-   git fetch origin && git checkout <task-branch>
-   ```
-
-   Replace [`<task-branch>`](../../../wiki/git-workflow.md#task-branch).
-
-   **Note:** The VM's repository is currently on `main` from Part B. This switches it to your task branch to get the type filter changes you just pushed.
-
-6. To rebuild and restart the `caddy` service,
-
-   [run in the `VS Code Terminal`](../../../wiki/vs-code.md#run-a-command-in-the-vs-code-terminal):
-
-   ```terminal
-   docker compose --env-file .env.docker.secret up --build caddy -d
-   ```
-
-   The output should be similar to this:
-
-   ```terminal
-   [+] Building ...
-   ...
-   [+] Running 1/1
-    ✔ Container caddy  Started
-   ```
-
-   <details><summary>Troubleshooting</summary>
-
-   <h4>Container build fails</h4>
-
-   Check that your changes are committed and pushed, and that you checked out the correct branch.
-
-   <h4>Port conflict (<code>port is already allocated</code>)</h4>
-
-   Stop the process that uses the port, then retry.
-
-   </details>
-
-7. Open in the browser: `http://<your-vm-ip-address>:<caddy-port>`.
-
-   Replace:
-
-   - [`<your-vm-ip-address>`](../../../wiki/vm.md#your-vm-ip-address)
-   - [`<caddy-port>`](../../../wiki/caddy.md#caddy-port)
-
-   Verify the filter dropdown appears and works in the production build.
+1. [Transfer the changes to your VM](./task-2.md#137-transfer-the-changes-to-your-vm).
+2. [Deploy the frontend to your VM](#141-deploy-the-frontend-to-the-vm).
+3. [Verify in the browser](#142-verify-in-the-browser).
+4. Verify the filter dropdown appears and works in this production build.
 
 ### 1.6. Finish the task
 

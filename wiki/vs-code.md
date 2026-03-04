@@ -777,7 +777,7 @@ Steps:
    wsl --install -d Ubuntu-24.04
    ```
 
-   **Note:** [`Ubuntu`](./linux.md#ubuntu) is a [`Linux` distro](./linux.md#ubuntu).
+   **Note:** [`Ubuntu`](./linux-distros.md#ubuntu) is a [`Linux` distro](./linux-distros.md#what-is-a-linux-distro).
 
 4. Open [`VS Code`](#what-is-vs-code).
 5. [Install the extension](./vs-code.md#install-the-vs-code-extension) with the identifier `ms-vscode-remote.remote-wsl`.

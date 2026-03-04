@@ -93,7 +93,9 @@ Its [absolute path](#absolute-path) is `/`.
 
 ### Home directory (`~`)
 
-Shortcut for the [absolute path](#absolute-path) for the [user](./operating-system.md#user) home [directory](#directory).
+Shortcut for the [absolute path](#absolute-path) for the [user](./operating-system.md#user) home [directory](#directory) `/home/<user>/`.
+
+See [`<user>`](./operating-system.md#user-placeholder).
 
 ### Current directory (`.`)
 

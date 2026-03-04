@@ -206,10 +206,12 @@ You can connect using the alias that you [added to your `SSH` config](#add-the-h
    ```
 
 2. If this is your first time connecting:
+
    1. You will see a message:
       `The authenticity of host ... can't be established.`
 
    2. Type `yes` and press `Enter`.
+
 3. After a successful login, you should see the [shell prompt](./shell.md#shell-prompt):
 
    ```terminal
@@ -217,6 +219,8 @@ You can connect using the alias that you [added to your `SSH` config](#add-the-h
    ```
 
    See [`<your-vm-name>`](./vm.md#your-vm-name).
+
+4. You are in the [home directory (`~`)](./file-system.md#home-directory-).
 
 ## Login
 
@@ -286,11 +290,11 @@ Password-based authentication asks you to type the remote user's password.
    You should see logs like these:
 
    ```terminal
-   PING 10.93.24.1 (10.93.24.1) 56(84) bytes of data.
+   PING 192.0.2.1 (192.0.2.1) 56(84) bytes of data.
 
-   64 bytes from 10.93.24.1: icmp_seq=1 ttl=61 time=2.15 ms
-   64 bytes from 10.93.24.1: icmp_seq=2 ttl=61 time=0.996 ms
-   64 bytes from 10.93.24.1: icmp_seq=3 ttl=61 time=1.08 ms
+   64 bytes from 192.0.2.1: icmp_seq=1 ttl=61 time=2.15 ms
+   64 bytes from 192.0.2.1: icmp_seq=2 ttl=61 time=0.996 ms
+   64 bytes from 192.0.2.1: icmp_seq=3 ttl=61 time=1.08 ms
    
    ...
    ```

@@ -57,7 +57,12 @@
                   name = "lint-docs";
                   command = ''
                     ${pkgs.lib.getExe pkgs.markdownlint-cli2} \
-                      '**/*.md' '#.direnv' '#.venv' '#node_modules'
+                      '**/*.md' \
+                      '#.direnv' \
+                      '#.venv' \
+                      '#**/node_modules' \
+                      '#*/skills' \
+                      '#tmp'
                   '';
                   help = "Lint all Markdown files";
                 }

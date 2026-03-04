@@ -1,9 +1,8 @@
-## `Linux` distro
+# `Linux` distro
 
 <h2>Table of contents</h2>
 
-- [`Linux` distro](#linux-distro)
-  - [What is a `Linux` distro](#what-is-a-linux-distro)
+- [What is a `Linux` distro](#what-is-a-linux-distro)
 - [Popular `Linux` distros](#popular-linux-distros)
   - [`Ubuntu`](#ubuntu)
   - [`ArchLinux`](#archlinux)
@@ -12,7 +11,7 @@
 
 <!-- TODO review -->
 
-### What is a `Linux` distro
+## What is a `Linux` distro
 
 A `Linux` distro (distribution) is a complete operating system built around the `Linux` kernel, bundled with a package manager, system tools, and default software chosen by its maintainers.
 

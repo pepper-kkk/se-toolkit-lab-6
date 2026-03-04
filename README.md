@@ -68,13 +68,12 @@ In simple words, you should be able to say:
 ### Prerequisites
 
 1. Complete the [lab setup](./lab/tasks/setup.md)
-2. Set up an [AI coding agent](./wiki/coding-agents.md)
 
 ### Required
 
-1. [Observe system component interaction](./lab/tasks/required/task-1.md)
+1. [Observe the interaction of the  system components](./lab/tasks/required/task-1.md)
 2. [Back-end testing](./lab/tasks/required/task-2.md)
-3. [Add front-end](./lab/tasks/required/task-3.md)
+3. [Add frontend](./lab/tasks/required/task-3.md)
 
 ### Optional
 

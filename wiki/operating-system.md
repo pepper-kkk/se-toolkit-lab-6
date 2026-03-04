@@ -15,6 +15,7 @@
   - [PID](#pid)
 - [Service](#service)
 - [User](#user)
+  - [`<user>` placeholder](#user-placeholder)
 - [Group](#group)
 
 ## What is an operating system
@@ -113,6 +114,10 @@ They form the backbone of system functionality and network communications.
 A user is an account on the operating system that can run [processes](#process) and own [files](./file-system.md#file).
 
 Each user has a primary account name and a set of permissions that determine what resources they can access or modify.
+
+### `<user>` placeholder
+
+The [user](#user) name (without `<` and `>`).
 
 ## Group
 
