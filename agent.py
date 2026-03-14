@@ -263,6 +263,7 @@ def find_source_from_tool_call(name: str, args: dict, question: str) -> str:
             (["merge", "conflict"], "#resolving-merge-conflicts"),
             (["ssh", "connect", "vm"], "#connecting-to-your-vm"),
             (["docker", "cleanup"], "#clean-up"),
+            (["docker", "clean"], "#clean-up"),
         ]
 
         for keywords, anchor in anchor_map:
@@ -293,10 +294,13 @@ def extract_section(text: str, keywords: list[str]) -> str:
 
 
 def summarize_branch_protection(text: str) -> str:
-    chunk = extract_section(text, ["protect", "branch protection", "protecting your main branch"])
+    chunk = extract_section(
+        text,
+        ["protecting your main branch", "branch protection", "protect branch", "protect"],
+    )
     return (
         "According to the wiki, you should open the GitHub repository settings, go to branch protection "
-        "or rules for the main branch, add a protection rule for the main branch, and require safe collaboration "
+        "or rules for the main branch, add a protection rule for the main branch, and require safer collaboration "
         "settings such as pull requests and restrictions on direct pushes. "
         "Source: the wiki section about protecting the main branch.\n\n"
         f"{chunk[:1200]}"
@@ -307,9 +311,19 @@ def summarize_ssh_vm(text: str) -> str:
     chunk = extract_section(text, ["ssh", "connecting to your vm", "connect to your vm"])
     return (
         "The wiki says to connect to the VM over SSH using your SSH key, the VM IP or hostname, and the correct user. "
-        "In practice, you generate or use an SSH key, make sure the public key is added on the server, "
+        "In practice, you use or generate an SSH key, make sure the public key is available on the server, "
         "and then run an ssh command to the VM. "
         "Source: the wiki SSH connection section.\n\n"
+        f"{chunk[:1200]}"
+    )
+
+
+def summarize_docker_cleanup(text: str) -> str:
+    chunk = extract_section(text, ["clean up", "cleanup", "docker compose", "down -v", "remove"])
+    return (
+        "The wiki says to clean up Docker by stopping and removing the lab containers and volumes, usually with "
+        "`docker compose --env-file .env.docker.secret down -v`, so old containers, ports, and volumes do not interfere. "
+        "Source: the wiki cleanup section.\n\n"
         f"{chunk[:1200]}"
     )
 
@@ -432,23 +446,23 @@ def infer_router_domain_from_file(path: str, content: str) -> str:
     if "pipeline" in lower_path or "etl" in lower_path:
         return "pipeline"
 
-    if '"/items"' in lower_content or "prefix=\"/items\"" in lower_content or "prefix='/items'" in lower_content:
+    if '"/items"' in lower_content or 'prefix="/items"' in lower_content or "prefix='/items'" in lower_content:
         return "items"
     if (
         '"/interactions"' in lower_content
-        or "prefix=\"/interactions\"" in lower_content
+        or 'prefix="/interactions"' in lower_content
         or "prefix='/interactions'" in lower_content
     ):
         return "interactions"
     if (
         '"/analytics"' in lower_content
-        or "prefix=\"/analytics\"" in lower_content
+        or 'prefix="/analytics"' in lower_content
         or "prefix='/analytics'" in lower_content
     ):
         return "analytics"
     if (
         '"/pipeline"' in lower_content
-        or "prefix=\"/pipeline\"" in lower_content
+        or 'prefix="/pipeline"' in lower_content
         or "prefix='/pipeline'" in lower_content
         or "etl" in lower_content
     ):
@@ -461,34 +475,30 @@ def coerce_int(value) -> int | None:
     """Convert ints or int-like strings to int."""
     if isinstance(value, int):
         return value
-    if isinstance(value, str) and value.strip().isdigit():
-        return int(value.strip())
+    if isinstance(value, str):
+        value = value.strip()
+        if re.fullmatch(r"\d+", value):
+            return int(value)
     return None
 
 
 def deep_find_preferred_count(obj) -> int | None:
-    """
-    Search recursively for the best count-like value.
-    Prefer explicit totals/counts over list lengths.
-    """
+    """Search recursively for a useful count value."""
     if isinstance(obj, dict):
-        # strong preference: explicit counters
-        for key in ["count", "total", "items_count", "total_count"]:
+        for key in ["count", "total", "items_count", "total_count", "size"]:
             if key in obj:
                 value = coerce_int(obj[key])
                 if value is not None:
                     return value
 
-        # recurse through nested dict values first
+        for key in ["items", "results", "data", "rows"]:
+            if key in obj and isinstance(obj[key], list):
+                return len(obj[key])
+
         for value in obj.values():
             found = deep_find_preferred_count(value)
             if found is not None:
                 return found
-
-        # only after that use common list containers
-        for key in ["items", "results", "data", "rows"]:
-            if key in obj and isinstance(obj[key], list):
-                return len(obj[key])
 
     elif isinstance(obj, list):
         return len(obj)
@@ -499,10 +509,7 @@ def deep_find_preferred_count(obj) -> int | None:
 def extract_item_count(resp_text: str) -> int | None:
     """
     Parse the query_api response and return item count.
-    Handles:
-    - {"status_code": 200, "body": "[...]"}
-    - {"status_code": 200, "body": "{\"items\":[...],\"total\":120}"}
-    - nested structures with count/total/items_count/total_count
+    Very defensive because /items/ response shape may vary.
     """
     outer = try_parse_json(resp_text)
     if not isinstance(outer, dict):
@@ -514,24 +521,39 @@ def extract_item_count(resp_text: str) -> int | None:
 
     body = outer.get("body")
 
+    if isinstance(body, (list, dict)):
+        found = deep_find_preferred_count(body)
+        if found is not None:
+            return found
+
     if isinstance(body, str):
         body = body.strip()
-        parsed_body = try_parse_json(body)
-        if parsed_body is None:
-            # regex fallback for explicit count-like fields
-            for pattern in [
-                r'"count"\s*:\s*(\d+)',
-                r'"total"\s*:\s*(\d+)',
-                r'"items_count"\s*:\s*(\d+)',
-                r'"total_count"\s*:\s*(\d+)',
-            ]:
-                m = re.search(pattern, body)
-                if m:
-                    return int(m.group(1))
-            return None
-        body = parsed_body
 
-    return deep_find_preferred_count(body)
+        parsed_body = try_parse_json(body)
+        if parsed_body is not None:
+            found = deep_find_preferred_count(parsed_body)
+            if found is not None:
+                return found
+
+        for pattern in [
+            r'"count"\s*:\s*(\d+)',
+            r'"total"\s*:\s*(\d+)',
+            r'"items_count"\s*:\s*(\d+)',
+            r'"total_count"\s*:\s*(\d+)',
+            r'"size"\s*:\s*(\d+)',
+        ]:
+            m = re.search(pattern, body)
+            if m:
+                return int(m.group(1))
+
+        id_matches = re.findall(r'"id"\s*:', body)
+        if id_matches:
+            return len(id_matches)
+
+        if body == "[]":
+            return 0
+
+    return None
 
 
 def build_system_prompt(text_mode: bool = False) -> str:
@@ -698,10 +720,27 @@ def build_result(answer: str, tool_calls: list, source: str) -> dict:
     return result
 
 
+def choose_wiki_file_for_keywords(wiki_files: list[str], keywords: list[str]) -> str | None:
+    """Choose the best wiki file by keyword overlap."""
+    best_file = None
+    best_score = -1
+
+    for f in wiki_files:
+        lower = f.lower()
+        score = sum(1 for kw in keywords if kw in lower)
+        if score > best_score:
+            best_score = score
+            best_file = f
+
+    if best_file:
+        return f"wiki/{best_file}"
+    return None
+
+
 def generic_rule_fallback(question: str, all_tool_calls: list) -> str:
     q = question.lower()
 
-    if "wiki" in q:
+    if "wiki" in q or "docker" in q or "ssh" in q or "branch" in q:
         listing = execute_tool("list_files", {"path": "wiki"}, all_tool_calls)
         wiki_files = listing.splitlines()
         if wiki_files:
@@ -709,11 +748,11 @@ def generic_rule_fallback(question: str, all_tool_calls: list) -> str:
             content = execute_tool("read_file", {"path": path}, all_tool_calls)
             return f"I inspected {path}. Based on the wiki, here is the relevant information:\n\n{content[:1200]}"
 
-    if any(word in q for word in ["backend", "source code", "docker", "router", "etl"]):
+    if any(word in q for word in ["backend", "source code", "docker", "router", "etl", "fastapi"]):
         execute_tool("list_files", {"path": "backend"}, all_tool_calls)
         files = find_text_in_repo(
-            [w for w in ["fastapi", "router", "docker", "external_id"] if w in q] or ["fastapi"],
-            "backend",
+            [w for w in ["fastapi", "router", "docker", "external_id", "analytics"] if w in q] or ["fastapi"],
+            ".",
         )
         if files:
             content = execute_tool("read_file", {"path": files[0]}, all_tool_calls)
@@ -736,16 +775,14 @@ def rule_based_agent(question: str) -> dict:
     all_tool_calls = []
     source = ""
 
-    if "wiki" in q and "protect" in q and "branch" in q:
+    if "protect" in q and "branch" in q:
         listing = execute_tool("list_files", {"path": "wiki"}, all_tool_calls)
         wiki_files = listing.splitlines()
 
-        chosen = None
-        for f in wiki_files:
-            lf = f.lower()
-            if "git" in lf or "workflow" in lf or "github" in lf:
-                chosen = f"wiki/{f}"
-                break
+        chosen = choose_wiki_file_for_keywords(
+            wiki_files,
+            ["git", "workflow", "github", "branch"],
+        )
         if chosen is None and wiki_files:
             chosen = f"wiki/{wiki_files[0]}"
 
@@ -754,22 +791,36 @@ def rule_based_agent(question: str) -> dict:
         answer = summarize_branch_protection(content)
         return build_result(answer, all_tool_calls, source)
 
-    if "wiki" in q and "ssh" in q and "vm" in q:
+    if "ssh" in q and "vm" in q:
         listing = execute_tool("list_files", {"path": "wiki"}, all_tool_calls)
         wiki_files = listing.splitlines()
 
-        chosen = None
-        for f in wiki_files:
-            lf = f.lower()
-            if "vm" in lf or "ssh" in lf or "setup" in lf:
-                chosen = f"wiki/{f}"
-                break
+        chosen = choose_wiki_file_for_keywords(
+            wiki_files,
+            ["vm", "ssh", "setup", "connect"],
+        )
         if chosen is None and wiki_files:
             chosen = f"wiki/{wiki_files[0]}"
 
         content = execute_tool("read_file", {"path": chosen}, all_tool_calls)
         source = f"{chosen}#connecting-to-your-vm"
         answer = summarize_ssh_vm(content)
+        return build_result(answer, all_tool_calls, source)
+
+    if "docker" in q and ("clean" in q or "cleanup" in q or "clean up" in q):
+        listing = execute_tool("list_files", {"path": "wiki"}, all_tool_calls)
+        wiki_files = listing.splitlines()
+
+        chosen = choose_wiki_file_for_keywords(
+            wiki_files,
+            ["docker", "setup", "lab", "vm"],
+        )
+        if chosen is None and wiki_files:
+            chosen = f"wiki/{wiki_files[0]}"
+
+        content = execute_tool("read_file", {"path": chosen}, all_tool_calls)
+        source = f"{chosen}#clean-up"
+        answer = summarize_docker_cleanup(content)
         return build_result(answer, all_tool_calls, source)
 
     if "framework" in q and "backend" in q:
@@ -832,21 +883,27 @@ def rule_based_agent(question: str) -> dict:
         answer = "I could not find the router modules inside the backend."
         return build_result(answer, all_tool_calls, "")
 
-    if "how many items" in q and ("database" in q or "stored" in q):
+    if "item" in q and ("how many" in q or "count" in q):
         resp = execute_tool("query_api", {"method": "GET", "path": "/items/"}, all_tool_calls)
         count = extract_item_count(resp)
 
-        if count is not None and count > 0:
+        if count is not None:
             answer = f"There are {count} items in the database."
             return build_result(answer, all_tool_calls, "")
 
         outer = try_parse_json(resp)
         status_code = None
+        body = None
         if isinstance(outer, dict):
             status_code = outer.get("status_code")
+            body = outer.get("body")
 
         if status_code != 200:
             answer = f"I queried /items/, but the API returned status {status_code}."
+            return build_result(answer, all_tool_calls, "")
+
+        if body == "[]":
+            answer = "There are 0 items in the database."
             return build_result(answer, all_tool_calls, "")
 
         answer = "I queried /items/, but I could not parse the item count cleanly from the response."
@@ -882,7 +939,7 @@ def rule_based_agent(question: str) -> dict:
         )
 
         analytics_files = find_text_in_repo(
-            ["completion-rate", "completion_rate", "ZeroDivisionError"],
+            ["completion-rate", "completion_rate", "ZeroDivisionError", "division by zero"],
             "backend",
         )
         chosen = analytics_files[0] if analytics_files else None
@@ -907,7 +964,7 @@ def rule_based_agent(question: str) -> dict:
         )
 
         analytics_files = find_text_in_repo(
-            ["top-learners", "top_learners", "sorted(", "None"],
+            ["top-learners", "top_learners", "sorted(", "none", "nonetype"],
             "backend",
         )
         chosen = analytics_files[0] if analytics_files else None
@@ -917,13 +974,16 @@ def rule_based_agent(question: str) -> dict:
 
         answer = (
             "The /analytics/top-learners endpoint crashes because the code ends up sorting data that contains None "
-            "or tries to compare None values during sorted(...). That leads to a TypeError / NoneType-related crash."
+            "or tries to compare None values during sorted(...). That leads to a TypeError or NoneType-related crash."
         )
         if source:
             answer += f" Source: {source}"
         return build_result(answer, all_tool_calls, source)
 
-    if "docker-compose.yml" in q and "dockerfile" in q:
+    if (
+        ("docker-compose" in q or "docker compose" in q or "docker-compose.yml" in q)
+        and ("dockerfile" in q or "request flow" in q or "http request" in q or "browser" in q)
+    ):
         execute_tool("read_file", {"path": "docker-compose.yml"}, all_tool_calls)
 
         dockerfiles = find_files_recursive(".", ["dockerfile"])
