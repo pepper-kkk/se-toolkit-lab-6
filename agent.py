@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LLM agent with tool calling for read_file and list_files."""
+"""LLM agent with tool calling for read_file, list_files, and query_api."""
 
 import json
 import os
@@ -54,6 +54,38 @@ def list_files(path: str) -> str:
         return f"Error listing '{path}': {e}"
 
 
+def query_api(method: str, path: str, body: str = None) -> str:
+    """Query the backend API. Returns JSON string with status_code and body."""
+    api_base = os.environ.get("AGENT_API_BASE_URL", "http://localhost:42002")
+    lms_api_key = os.environ.get("LMS_API_KEY")
+
+    if not lms_api_key:
+        return json.dumps({"status_code": 0, "body": "Error: LMS_API_KEY not set"})
+
+    url = f"{api_base.rstrip('/')}{path}"
+    headers = {
+        "Authorization": f"Bearer {lms_api_key}",
+    }
+
+    data = None
+    if body:
+        headers["Content-Type"] = "application/json"
+        data = body.encode("utf-8")
+
+    try:
+        req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            response_body = resp.read().decode("utf-8")
+            return json.dumps({"status_code": resp.status, "body": response_body})
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8") if e.fp else ""
+        return json.dumps({"status_code": e.code, "body": error_body})
+    except urllib.error.URLError as e:
+        return json.dumps({"status_code": 0, "body": f"Error: {e.reason}"})
+    except Exception as e:
+        return json.dumps({"status_code": 0, "body": f"Error: {e}"})
+
+
 # Tool schemas for OpenAI function calling
 TOOLS = [
     {
@@ -89,6 +121,31 @@ TOOLS = [
                 "required": ["path"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_api",
+            "description": "Query the backend API to get live data about database, items, or system state",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "method": {
+                        "type": "string",
+                        "description": "HTTP method (GET, POST, etc.)"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "API path (e.g., /api/items)"
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Optional JSON body for POST/PUT requests"
+                    }
+                },
+                "required": ["method", "path"]
+            }
+        }
     }
 ]
 
@@ -96,6 +153,7 @@ TOOLS = [
 TOOL_FUNCTIONS = {
     "read_file": read_file,
     "list_files": list_files,
+    "query_api": query_api,
 }
 
 
@@ -176,9 +234,10 @@ def main():
 
     # System prompt
     system_prompt = (
-        "You are a documentation assistant. Use list_files to discover wiki files, "
-        "then read_file to find specific information. "
-        "Answer based on the file contents. Include source as the file path."
+        "You are a documentation and system assistant. "
+        "Use list_files/read_file for documentation questions about wiki or source code. "
+        "Use query_api for questions about live system state, database, or API endpoints. "
+        "Answer based on the information you gather. Include source when available."
     )
 
     # Initialize conversation

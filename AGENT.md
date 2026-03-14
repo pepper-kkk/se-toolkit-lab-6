@@ -141,3 +141,81 @@ The agent supports two tools for accessing project documentation:
 ### Security
 
 Both tools reject paths that traverse outside the project root (e.g., `../etc/passwd`).
+
+## Agent Architecture (Task 3)
+
+### Final Architecture
+
+The agent now supports three tools for answering different types of questions:
+
+| Tool | Purpose |
+|------|---------|
+| `read_file(path)` | Read static file contents (documentation, source code) |
+| `list_files(path)` | Discover available files in directories |
+| `query_api(method, path, body?)` | Query live backend API for dynamic data |
+
+### query_api Tool
+
+The `query_api` tool enables the agent to fetch live data from the backend system:
+
+- **Base URL**: Read from `AGENT_API_BASE_URL` environment variable (default: `http://localhost:42002`)
+- **Authentication**: Uses `LMS_API_KEY` in the `Authorization: Bearer {key}` header
+- **Parameters**:
+  - `method`: HTTP method (GET, POST, etc.)
+  - `path`: API endpoint path (e.g., `/api/items`)
+  - `body`: Optional JSON body for POST/PUT requests
+- **Returns**: JSON string with `status_code` and `body` fields
+
+### Authentication
+
+The agent requires two separate API keys:
+- `LLM_API_KEY`: Authenticates with the LLM provider (e.g., Qwen Code API)
+- `LMS_API_KEY`: Authenticates with the backend LMS API for `query_api` tool
+
+These are stored in `.env.agent.secret` and never committed to git.
+
+### Tool Selection Strategy
+
+The system prompt guides the model to choose the right tool:
+- **Documentation questions** ("What does REST stand for?", "How do you resolve merge conflicts?") → `list_files` / `read_file`
+- **Source code questions** ("What framework does the backend use?") → `read_file` on backend files
+- **Live data questions** ("How many items are in the database?") → `query_api GET /api/items`
+
+This separation allows the agent to handle both static knowledge (documentation) and dynamic state (database contents).
+
+### Agentic Loop
+
+1. Send user question + system prompt + tool schemas to LLM
+2. If LLM returns tool calls:
+   - Execute each tool locally (file I/O or HTTP request)
+   - Append tool results to conversation as tool messages
+   - Repeat (max 10 iterations)
+3. When LLM returns text answer (no tool calls), return final JSON
+
+### Output Format (Task 3)
+
+```json
+{
+  "answer": "The backend uses FastAPI framework.",
+  "source": "backend/main.py",
+  "tool_calls": [
+    {"tool": "read_file", "arguments": {"path": "backend/main.py"}}
+  ]
+}
+```
+
+### Lessons Learned / Benchmark Notes
+
+- **Model selection matters**: Smaller models may not follow tool-calling patterns as reliably. The `qwen3-coder-plus` model shows good tool selection accuracy.
+- **System prompt tuning**: Initial prompts were too vague. Being explicit about when to use each tool improved accuracy significantly.
+- **Error handling**: File not found and API errors are returned as tool results, allowing the model to gracefully recover or report the issue.
+- **Iteration limit**: The 10-call limit prevents infinite loops while allowing complex multi-step queries.
+- **Testing strategy**: Mock HTTP servers for both LLM API and backend API enable reliable regression tests without external dependencies.
+
+### Benchmark Performance
+
+Common evaluation questions and expected tool usage:
+- "What does REST stand for?" → Direct LLM answer (no tools)
+- "How do you resolve a merge conflict?" → `list_files` wiki, `read_file` wiki/git-workflow.md
+- "What framework does the backend use?" → `read_file` backend/main.py → "FastAPI"
+- "How many items are in the database?" → `query_api` GET /api/items → numeric answer
