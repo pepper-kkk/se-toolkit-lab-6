@@ -368,6 +368,265 @@ def test_agent_wiki_files():
     assert len(output["answer"]) > 0, "answer should not be empty"
 
 
+# ============== Task 3 Tests ==============
+
+class MockLLMHandler_Task3_BackendFramework(http.server.BaseHTTPRequestHandler):
+    """Mock API for backend framework test: read_file -> answer with FastAPI."""
+
+    request_count = 0
+
+    def log_message(self, format, *args):
+        pass
+
+    def do_POST(self):
+        if self.path.endswith("/chat/completions"):
+            content_length = int(self.headers.get("Content-Length", 0))
+            self.rfile.read(content_length)
+
+            MockLLMHandler_Task3_BackendFramework.request_count += 1
+            req_num = MockLLMHandler_Task3_BackendFramework.request_count
+
+            if req_num == 1:
+                # First call: return read_file tool call for backend
+                response = {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "read_file",
+                                            "arguments": json.dumps({"path": "backend/app/main.py"})
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            else:
+                # Second call: return final answer mentioning FastAPI
+                response = {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "The backend uses FastAPI framework.",
+                                "role": "assistant"
+                            }
+                        }
+                    ]
+                }
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode("utf-8"))
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+
+class MockLLMHandler_Task3_DatabaseItems(http.server.BaseHTTPRequestHandler):
+    """Mock API for database items test: query_api -> answer with numeric count."""
+
+    request_count = 0
+
+    def log_message(self, format, *args):
+        pass
+
+    def do_POST(self):
+        if self.path.endswith("/chat/completions"):
+            content_length = int(self.headers.get("Content-Length", 0))
+            self.rfile.read(content_length)
+
+            MockLLMHandler_Task3_DatabaseItems.request_count += 1
+            req_num = MockLLMHandler_Task3_DatabaseItems.request_count
+
+            if req_num == 1:
+                # First call: return query_api tool call
+                response = {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "query_api",
+                                            "arguments": json.dumps({"method": "GET", "path": "/api/items"})
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            else:
+                # Second call: return final answer with numeric count
+                response = {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "There are 42 items in the database.",
+                                "role": "assistant"
+                            }
+                        }
+                    ]
+                }
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode("utf-8"))
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+
+class MockBackendAPIHandler(http.server.BaseHTTPRequestHandler):
+    """Mock backend API that returns items count."""
+
+    def log_message(self, format, *args):
+        pass
+
+    def do_GET(self):
+        if self.path == "/api/items":
+            auth_header = self.headers.get("Authorization", "")
+            if not auth_header.startswith("Bearer "):
+                self.send_response(401)
+                self.end_headers()
+                self.wfile.write(b"Unauthorized")
+                return
+
+            response = {"items": [{"id": i, "name": f"Item {i}"} for i in range(42)]}
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode("utf-8"))
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+
+def test_agent_backend_framework():
+    """Test agent with read_file for source code question - should mention FastAPI."""
+    MockLLMHandler_Task3_BackendFramework.request_count = 0
+
+    port = find_free_port()
+    api_base = f"http://127.0.0.1:{port}"
+
+    ready_event = threading.Event()
+    server_thread = threading.Thread(
+        target=run_mock_server,
+        args=(port, ready_event, MockLLMHandler_Task3_BackendFramework, 2)
+    )
+    server_thread.daemon = True
+    server_thread.start()
+
+    ready_event.wait(timeout=5)
+
+    agent_path = Path(__file__).parent.parent / "agent.py"
+    env = os.environ.copy()
+    env["LLM_API_KEY"] = "test-key"
+    env["LLM_API_BASE"] = api_base
+    env["LLM_MODEL"] = "test-model"
+
+    result = subprocess.run(
+        [sys.executable, str(agent_path), "What framework does the backend use?"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, f"Exit code: {result.returncode}, stderr: {result.stderr}"
+
+    try:
+        output = json.loads(result.stdout)
+    except json.JSONDecodeError as e:
+        raise AssertionError(f"Invalid JSON output: {result.stdout}") from e
+
+    assert "answer" in output, "Missing 'answer' field"
+    assert "tool_calls" in output, "Missing 'tool_calls' field"
+
+    # Assert at least one read_file call
+    tool_names = [tc.get("tool") for tc in output["tool_calls"]]
+    assert "read_file" in tool_names, "Should have at least one read_file tool call"
+
+    # Assert answer mentions FastAPI
+    assert "FastAPI" in output["answer"], f"Answer should mention FastAPI, got: {output['answer']}"
+
+
+def test_agent_database_items():
+    """Test agent with query_api for live database question - should return numeric answer."""
+    MockLLMHandler_Task3_DatabaseItems.request_count = 0
+
+    # Start mock LLM server
+    llm_port = find_free_port()
+    api_base = f"http://127.0.0.1:{llm_port}"
+
+    llm_ready = threading.Event()
+    llm_thread = threading.Thread(
+        target=run_mock_server,
+        args=(llm_port, llm_ready, MockLLMHandler_Task3_DatabaseItems, 2)
+    )
+    llm_thread.daemon = True
+    llm_thread.start()
+
+    # Start mock backend API server
+    backend_port = find_free_port()
+    backend_ready = threading.Event()
+    backend_thread = threading.Thread(
+        target=run_mock_server,
+        args=(backend_port, backend_ready, MockBackendAPIHandler, 1)
+    )
+    backend_thread.daemon = True
+    backend_thread.start()
+
+    llm_ready.wait(timeout=5)
+    backend_ready.wait(timeout=5)
+
+    agent_path = Path(__file__).parent.parent / "agent.py"
+    env = os.environ.copy()
+    env["LLM_API_KEY"] = "test-key"
+    env["LLM_API_BASE"] = api_base
+    env["LLM_MODEL"] = "test-model"
+    env["LMS_API_KEY"] = "test-lms-key"
+    env["AGENT_API_BASE_URL"] = f"http://127.0.0.1:{backend_port}"
+
+    result = subprocess.run(
+        [sys.executable, str(agent_path), "How many items are in the database?"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, f"Exit code: {result.returncode}, stderr: {result.stderr}"
+
+    try:
+        output = json.loads(result.stdout)
+    except json.JSONDecodeError as e:
+        raise AssertionError(f"Invalid JSON output: {result.stdout}") from e
+
+    assert "answer" in output, "Missing 'answer' field"
+    assert "tool_calls" in output, "Missing 'tool_calls' field"
+
+    # Assert at least one query_api call
+    tool_names = [tc.get("tool") for tc in output["tool_calls"]]
+    assert "query_api" in tool_names, "Should have at least one query_api tool call"
+
+    # Assert answer contains a number
+    import re
+    numbers = re.findall(r'\d+', output["answer"])
+    assert len(numbers) > 0, f"Answer should contain a number, got: {output['answer']}"
+
+
 if __name__ == "__main__":
     test_agent_basic()
     print("Test 1 (basic) passed!")
@@ -375,4 +634,8 @@ if __name__ == "__main__":
     print("Test 2 (merge conflict) passed!")
     test_agent_wiki_files()
     print("Test 3 (wiki files) passed!")
+    test_agent_backend_framework()
+    print("Test 4 (backend framework) passed!")
+    test_agent_database_items()
+    print("Test 5 (database items) passed!")
     print("All tests passed!")
