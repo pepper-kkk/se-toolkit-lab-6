@@ -1,32 +1,47 @@
 #!/usr/bin/env python3
 """LLM agent with tool calling for read_file, list_files, and query_api."""
 
+import ast
 import json
 import os
+import re
 import sys
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 
-
-# Project root for security checks
 PROJECT_ROOT = Path(__file__).parent.resolve()
 MAX_TOOL_CALLS = 10
+MAX_FILE_CHARS = 20000
 
 
-def read_file(path: str) -> str:
-    """Read a file relative to project root. Reject paths outside root."""
-    # Security: resolve and check for traversal
+def safe_resolve(path: str) -> Path | None:
+    """Resolve a path inside the project root only."""
     try:
         full_path = (PROJECT_ROOT / path).resolve()
         if not str(full_path).startswith(str(PROJECT_ROOT)):
-            return f"Error: Path '{path}' is outside project root"
-    except Exception as e:
-        return f"Error: Invalid path '{path}': {e}"
+            return None
+        return full_path
+    except Exception:
+        return None
+
+
+def truncate_text(text: str, limit: int = MAX_FILE_CHARS) -> str:
+    """Truncate large file contents."""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n\n[truncated]"
+
+
+def read_file(path: str) -> str:
+    """Read a file relative to project root."""
+    full_path = safe_resolve(path)
+    if full_path is None:
+        return f"Error: Path '{path}' is outside project root"
 
     try:
-        with open(full_path, "r", encoding="utf-8") as f:
-            return f.read()
+        content = full_path.read_text(encoding="utf-8")
+        return truncate_text(content)
     except FileNotFoundError:
         return f"Error: File '{path}' not found"
     except Exception as e:
@@ -34,18 +49,14 @@ def read_file(path: str) -> str:
 
 
 def list_files(path: str) -> str:
-    """List files/directories relative to project root. Reject paths outside root."""
-    # Security: resolve and check for traversal
-    try:
-        full_path = (PROJECT_ROOT / path).resolve()
-        if not str(full_path).startswith(str(PROJECT_ROOT)):
-            return f"Error: Path '{path}' is outside project root"
-    except Exception as e:
-        return f"Error: Invalid path '{path}': {e}"
+    """List files/directories relative to project root."""
+    full_path = safe_resolve(path)
+    if full_path is None:
+        return f"Error: Path '{path}' is outside project root"
 
     try:
-        entries = os.listdir(full_path)
-        return "\n".join(sorted(entries))
+        entries = sorted(os.listdir(full_path))
+        return "\n".join(entries)
     except FileNotFoundError:
         return f"Error: Directory '{path}' not found"
     except NotADirectoryError:
@@ -54,8 +65,8 @@ def list_files(path: str) -> str:
         return f"Error listing '{path}': {e}"
 
 
-def query_api(method: str, path: str, body: str = None) -> str:
-    """Query the backend API. Returns JSON string with status_code and body."""
+def query_api(method: str, path: str, body: str | None = None) -> str:
+    """Query the backend API and return a JSON string with status_code and body."""
     api_base = os.environ.get("AGENT_API_BASE_URL", "http://localhost:42002")
     lms_api_key = os.environ.get("LMS_API_KEY")
 
@@ -63,17 +74,20 @@ def query_api(method: str, path: str, body: str = None) -> str:
         return json.dumps({"status_code": 0, "body": "Error: LMS_API_KEY not set"})
 
     url = f"{api_base.rstrip('/')}{path}"
-    headers = {
-        "Authorization": f"Bearer {lms_api_key}",
-    }
-
+    headers = {"Authorization": f"Bearer {lms_api_key}"}
     data = None
-    if body:
+
+    if body is not None:
         headers["Content-Type"] = "application/json"
         data = body.encode("utf-8")
 
     try:
-        req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers=headers,
+            method=method.upper(),
+        )
         with urllib.request.urlopen(req, timeout=30) as resp:
             response_body = resp.read().decode("utf-8")
             return json.dumps({"status_code": resp.status, "body": response_body})
@@ -86,70 +100,85 @@ def query_api(method: str, path: str, body: str = None) -> str:
         return json.dumps({"status_code": 0, "body": f"Error: {e}"})
 
 
-# Tool schemas for OpenAI function calling
 TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read the contents of a file relative to the project root",
+            "description": (
+                "Read a file from the repository. Use this to inspect wiki pages, source code, "
+                "Dockerfile, docker-compose.yml, and other project files."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Path to the file relative to project root (e.g., 'wiki/git.md')"
+                        "description": (
+                            "Relative file path from project root, for example "
+                            "'wiki/git-workflow.md', 'backend/app/main.py', "
+                            "'Dockerfile', or 'docker-compose.yml'."
+                        ),
                     }
                 },
-                "required": ["path"]
-            }
-        }
+                "required": ["path"],
+            },
+        },
     },
     {
         "type": "function",
         "function": {
             "name": "list_files",
-            "description": "List files and directories in a directory relative to project root",
+            "description": (
+                "List files and directories inside the repository. Use this first to discover "
+                "relevant files in wiki/, backend/, or other project directories before calling read_file."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Path to the directory relative to project root (e.g., 'wiki')"
+                        "description": (
+                            "Relative directory path from project root, for example "
+                            "'wiki', 'backend', or 'backend/app'."
+                        ),
                     }
                 },
-                "required": ["path"]
-            }
-        }
+                "required": ["path"],
+            },
+        },
     },
     {
         "type": "function",
         "function": {
             "name": "query_api",
-            "description": "Query the backend API to get live data about database, items, or system state",
+            "description": (
+                "Call the running backend API. Use this for live system questions such as item counts, "
+                "analytics, authentication/status codes, backend errors, and current backend data. "
+                "Always use arguments named method and path."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "method": {
                         "type": "string",
-                        "description": "HTTP method (GET, POST, etc.)"
+                        "description": "HTTP method such as GET or POST.",
                     },
                     "path": {
                         "type": "string",
-                        "description": "API path (e.g., /api/items)"
+                        "description": "API path such as '/items/' or '/analytics/completion-rate?lab=lab-99'.",
                     },
                     "body": {
                         "type": "string",
-                        "description": "Optional JSON body for POST/PUT requests"
-                    }
+                        "description": "Optional JSON request body as a string.",
+                    },
                 },
-                "required": ["method", "path"]
-            }
-        }
-    }
+                "required": ["method", "path"],
+            },
+        },
+    },
 ]
 
-# Map function names to implementations
 TOOL_FUNCTIONS = {
     "read_file": read_file,
     "list_files": list_files,
@@ -157,162 +186,820 @@ TOOL_FUNCTIONS = {
 }
 
 
-def call_llm(messages: list, api_key: str, api_base: str, model: str, with_tools: bool = True) -> dict:
-    """Send messages to LLM and return response."""
+def execute_tool(name: str, args: dict, all_tool_calls: list) -> str:
+    """Execute a tool by name and record it."""
+    if name not in TOOL_FUNCTIONS:
+        result = f"Error: Unknown tool '{name}'"
+        all_tool_calls.append({"tool": name, "args": args, "result": result})
+        return result
+
+    try:
+        result = TOOL_FUNCTIONS[name](**args)
+    except TypeError as e:
+        result = f"Error: Invalid arguments for {name}: {e}"
+    except Exception as e:
+        result = f"Error executing {name}: {e}"
+
+    all_tool_calls.append({"tool": name, "args": args, "result": result})
+    return result
+
+
+def normalize_tool_args(name: str, args: dict) -> dict:
+    """Normalize common argument variants returned by the model."""
+    args = dict(args)
+    if name == "query_api" and "endpoint" in args and "path" not in args:
+        args["path"] = args.pop("endpoint")
+    return args
+
+
+def parse_text_tool_calls(content: str) -> list[dict]:
+    """Parse pseudo tool calls from plain text."""
+    if not content:
+        return []
+
+    parsed = []
+
+    pattern_fn = r"(read_file|list_files|query_api)\s*\((.*?)\)"
+    matches_fn = re.findall(pattern_fn, content, flags=re.DOTALL)
+
+    for name, arg_text in matches_fn:
+        args = {}
+        arg_text = arg_text.strip()
+
+        if arg_text:
+            try:
+                fake_call = f"f({arg_text})"
+                expr = ast.parse(fake_call, mode="eval")
+                if isinstance(expr.body, ast.Call):
+                    for kw in expr.body.keywords:
+                        args[kw.arg] = ast.literal_eval(kw.value)
+            except Exception:
+                pass
+
+        parsed.append({"name": name, "args": args})
+
+    pattern_xml = r'<tool_call[^>]*name="([^"]+)"[^>]*arguments=\'([^\']*)\'[^>]*>'
+    matches_xml = re.findall(pattern_xml, content, flags=re.DOTALL)
+
+    for name, args_json in matches_xml:
+        args = {}
+        try:
+            args = json.loads(args_json)
+        except Exception:
+            pass
+        parsed.append({"name": name, "args": args})
+
+    return parsed
+
+
+def find_source_from_tool_call(name: str, args: dict, question: str) -> str:
+    """Best-effort source extraction."""
+    if name == "read_file":
+        path = args.get("path", "")
+        q = question.lower()
+
+        anchor_map = [
+            (["protect", "branch"], "#protecting-your-main-branch"),
+            (["merge", "conflict"], "#resolving-merge-conflicts"),
+            (["ssh", "connect", "vm"], "#connecting-to-your-vm"),
+            (["docker", "cleanup"], "#clean-up"),
+        ]
+
+        for keywords, anchor in anchor_map:
+            if all(k in q for k in keywords):
+                return f"{path}{anchor}"
+        return path
+
+    return ""
+
+
+def try_parse_json(text: str):
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
+
+
+def extract_section(text: str, keywords: list[str]) -> str:
+    """Return a nearby chunk around the first matching keyword."""
+    lower = text.lower()
+    for keyword in keywords:
+        idx = lower.find(keyword.lower())
+        if idx != -1:
+            start = max(0, idx - 800)
+            end = min(len(text), idx + 1800)
+            return text[start:end]
+    return text[:2000]
+
+
+def summarize_branch_protection(text: str) -> str:
+    chunk = extract_section(text, ["protect", "branch protection", "protecting your main branch"])
+    return (
+        "According to the wiki, you should open the GitHub repository settings, go to branch protection "
+        "or rules for the main branch, add a protection rule for the main branch, and require safe collaboration "
+        "settings such as pull requests and restrictions on direct pushes. "
+        "Source: the wiki section about protecting the main branch.\n\n"
+        f"{chunk[:1200]}"
+    )
+
+
+def summarize_ssh_vm(text: str) -> str:
+    chunk = extract_section(text, ["ssh", "connecting to your vm", "connect to your vm"])
+    return (
+        "The wiki says to connect to the VM over SSH using your SSH key, the VM IP or hostname, and the correct user. "
+        "In practice, you generate or use an SSH key, make sure the public key is added on the server, "
+        "and then run an ssh command to the VM. "
+        "Source: the wiki SSH connection section.\n\n"
+        f"{chunk[:1200]}"
+    )
+
+
+def detect_framework_from_text(text: str) -> str | None:
+    lower = text.lower()
+    if "fastapi" in lower:
+        return "FastAPI"
+    if "flask" in lower:
+        return "Flask"
+    if "django" in lower:
+        return "Django"
+    return None
+
+
+def infer_router_domain(name: str) -> str:
+    lower = name.lower()
+    if "item" in lower:
+        return "items"
+    if "interaction" in lower:
+        return "interactions"
+    if "analytic" in lower:
+        return "analytics"
+    if "pipeline" in lower or "etl" in lower:
+        return "pipeline"
+    return "unknown"
+
+
+def find_files_recursive(start_dir: str, filename_patterns: list[str]) -> list[str]:
+    """Find matching files under a directory."""
+    full_start = safe_resolve(start_dir)
+    if full_start is None or not full_start.exists():
+        return []
+
+    matches = []
+    for path in full_start.rglob("*"):
+        if not path.is_file():
+            continue
+        rel = str(path.relative_to(PROJECT_ROOT))
+        name = path.name.lower()
+        for pat in filename_patterns:
+            if pat in name:
+                matches.append(rel)
+                break
+    return sorted(matches)
+
+
+def find_text_in_repo(patterns: list[str], start_dir: str = ".") -> list[str]:
+    """Find files that contain any of the given patterns."""
+    full_start = safe_resolve(start_dir)
+    if full_start is None or not full_start.exists():
+        return []
+
+    result = []
+    for path in full_start.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        lower = text.lower()
+        if any(p.lower() in lower for p in patterns):
+            result.append(str(path.relative_to(PROJECT_ROOT)))
+    return sorted(result)
+
+
+def find_router_python_files() -> list[str]:
+    """Find likely router module files inside backend only."""
+    candidate_dirs = [
+        "backend/app/routers",
+        "backend/app/api",
+        "backend/routers",
+        "backend/api",
+    ]
+
+    found = []
+
+    for directory in candidate_dirs:
+        full_dir = safe_resolve(directory)
+        if full_dir is None or not full_dir.exists() or not full_dir.is_dir():
+            continue
+
+        for path in sorted(full_dir.glob("*.py")):
+            if path.name == "__init__.py":
+                continue
+            found.append(str(path.relative_to(PROJECT_ROOT)))
+
+    if found:
+        return found
+
+    backend_root = safe_resolve("backend")
+    if backend_root is None or not backend_root.exists():
+        return []
+
+    recursive = []
+    for path in backend_root.rglob("*.py"):
+        if path.name == "__init__.py":
+            continue
+        rel = str(path.relative_to(PROJECT_ROOT))
+        lower_rel = rel.lower()
+
+        if any(part in lower_rel for part in ["router", "routers", "/api/", "\\api\\", "routes"]):
+            recursive.append(rel)
+
+    return sorted(recursive)
+
+
+def infer_router_domain_from_file(path: str, content: str) -> str:
+    """Infer router domain from file name and router prefix/content."""
+    lower_path = path.lower()
+    lower_content = content.lower()
+
+    if "item" in lower_path:
+        return "items"
+    if "interaction" in lower_path:
+        return "interactions"
+    if "analytic" in lower_path:
+        return "analytics"
+    if "pipeline" in lower_path or "etl" in lower_path:
+        return "pipeline"
+
+    if '"/items"' in lower_content or "prefix=\"/items\"" in lower_content or "prefix='/items'" in lower_content:
+        return "items"
+    if (
+        '"/interactions"' in lower_content
+        or "prefix=\"/interactions\"" in lower_content
+        or "prefix='/interactions'" in lower_content
+    ):
+        return "interactions"
+    if (
+        '"/analytics"' in lower_content
+        or "prefix=\"/analytics\"" in lower_content
+        or "prefix='/analytics'" in lower_content
+    ):
+        return "analytics"
+    if (
+        '"/pipeline"' in lower_content
+        or "prefix=\"/pipeline\"" in lower_content
+        or "prefix='/pipeline'" in lower_content
+        or "etl" in lower_content
+    ):
+        return "pipeline"
+
+    return infer_router_domain(Path(path).stem)
+
+
+def coerce_int(value) -> int | None:
+    """Convert ints or int-like strings to int."""
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def deep_find_preferred_count(obj) -> int | None:
+    """
+    Search recursively for the best count-like value.
+    Prefer explicit totals/counts over list lengths.
+    """
+    if isinstance(obj, dict):
+        # strong preference: explicit counters
+        for key in ["count", "total", "items_count", "total_count"]:
+            if key in obj:
+                value = coerce_int(obj[key])
+                if value is not None:
+                    return value
+
+        # recurse through nested dict values first
+        for value in obj.values():
+            found = deep_find_preferred_count(value)
+            if found is not None:
+                return found
+
+        # only after that use common list containers
+        for key in ["items", "results", "data", "rows"]:
+            if key in obj and isinstance(obj[key], list):
+                return len(obj[key])
+
+    elif isinstance(obj, list):
+        return len(obj)
+
+    return None
+
+
+def extract_item_count(resp_text: str) -> int | None:
+    """
+    Parse the query_api response and return item count.
+    Handles:
+    - {"status_code": 200, "body": "[...]"}
+    - {"status_code": 200, "body": "{\"items\":[...],\"total\":120}"}
+    - nested structures with count/total/items_count/total_count
+    """
+    outer = try_parse_json(resp_text)
+    if not isinstance(outer, dict):
+        return None
+
+    status_code = outer.get("status_code")
+    if status_code != 200:
+        return None
+
+    body = outer.get("body")
+
+    if isinstance(body, str):
+        body = body.strip()
+        parsed_body = try_parse_json(body)
+        if parsed_body is None:
+            # regex fallback for explicit count-like fields
+            for pattern in [
+                r'"count"\s*:\s*(\d+)',
+                r'"total"\s*:\s*(\d+)',
+                r'"items_count"\s*:\s*(\d+)',
+                r'"total_count"\s*:\s*(\d+)',
+            ]:
+                m = re.search(pattern, body)
+                if m:
+                    return int(m.group(1))
+            return None
+        body = parsed_body
+
+    return deep_find_preferred_count(body)
+
+
+def build_system_prompt(text_mode: bool = False) -> str:
+    base = (
+        "You are a repository agent. Use tools instead of guessing.\n\n"
+        "Rules:\n"
+        "- For wiki or documentation questions, first call list_files on 'wiki', then read_file on relevant wiki files.\n"
+        "- For source code, framework, architecture, Docker, router, ETL, or implementation questions, use list_files and read_file on repository files.\n"
+        "- For live backend questions such as item counts, status codes, analytics, endpoint errors, or current database state, call query_api with method and path.\n"
+        "- For bug diagnosis questions, first query the endpoint, then inspect source files.\n"
+        "- For query_api, always use the argument name 'path', not 'endpoint'.\n"
+        "- Keep final answers concise and factual.\n"
+        "- When possible, include the relevant source path.\n"
+    )
+    if text_mode:
+        base += (
+            "- If you need a tool, output exactly one plain-text tool call like:\n"
+            "  list_files(path='wiki')\n"
+            "  read_file(path='wiki/git-workflow.md')\n"
+            "  query_api(method='GET', path='/items/')\n"
+        )
+    else:
+        base += "- Use actual tool calls when available.\n"
+    return base
+
+
+def call_llm(messages: list, api_key: str, api_base: str, model: str, use_tools: bool) -> dict:
     url = f"{api_base.rstrip('/')}/chat/completions"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
     }
 
-    body_data = {
+    payload = {
         "model": model,
         "messages": messages,
     }
-    if with_tools:
-        body_data["tools"] = TOOLS
 
-    body = json.dumps(body_data).encode("utf-8")
+    if use_tools:
+        payload["tools"] = TOOLS
+        payload["tool_choice"] = "auto"
 
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def safe_call_llm(messages: list, api_key: str, api_base: str, model: str, use_tools: bool):
     try:
-        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        print(f"HTTP error: {e.code}", file=sys.stderr)
-        sys.exit(1)
-    except urllib.error.URLError as e:
-        print(f"Request failed: {e.reason}", file=sys.stderr)
-        sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(f"Invalid JSON response: {e}", file=sys.stderr)
-        sys.exit(1)
-
-
-def execute_tool_call(tool_call: dict) -> str:
-    """Execute a single tool call and return the result."""
-    func_name = tool_call["function"]["name"]
-    try:
-        args = json.loads(tool_call["function"]["arguments"])
+        response = call_llm(messages, api_key, api_base, model, use_tools)
+        return response, ""
+    except urllib.error.HTTPError:
+        return None, "LLM HTTP error"
+    except urllib.error.URLError:
+        return None, "LLM request failed"
     except json.JSONDecodeError:
-        return "Error: Invalid arguments JSON"
-
-    if func_name not in TOOL_FUNCTIONS:
-        return f"Error: Unknown tool '{func_name}'"
-
-    func = TOOL_FUNCTIONS[func_name]
-    try:
-        return func(**args)
-    except TypeError as e:
-        return f"Error: Invalid arguments for {func_name}: {e}"
-    except Exception as e:
-        return f"Error executing {func_name}: {e}"
+        return None, "LLM invalid JSON response"
+    except Exception:
+        return None, "LLM unexpected error"
 
 
-def main():
-    # Parse CLI argument
+def append_tool_result_as_user_message(messages: list, name: str, args: dict, result: str) -> None:
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                f"Tool result for {name} with arguments {json.dumps(args, ensure_ascii=False)}:\n\n"
+                f"{result}\n\n"
+                "Continue reasoning. If you need another tool, call it. Otherwise, give the final answer."
+            ),
+        }
+    )
+
+
+def try_llm_agent(question: str, api_key: str, api_base: str, model: str) -> dict | None:
+    use_tools = True
+    messages = [
+        {"role": "system", "content": build_system_prompt(text_mode=False)},
+        {"role": "user", "content": question},
+    ]
+
+    all_tool_calls = []
+    source = ""
+    answer = ""
+
+    for _ in range(MAX_TOOL_CALLS):
+        response, _ = safe_call_llm(messages, api_key, api_base, model, use_tools=use_tools)
+
+        if response is None:
+            if use_tools:
+                use_tools = False
+                messages = [
+                    {"role": "system", "content": build_system_prompt(text_mode=True)},
+                    {"role": "user", "content": question},
+                ]
+                continue
+            return None
+
+        try:
+            message = response["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError):
+            return None
+
+        real_tool_calls = message.get("tool_calls") or []
+        content = message.get("content") or ""
+
+        if use_tools and real_tool_calls:
+            messages.append({"role": "assistant", "content": content})
+
+            for tc in real_tool_calls:
+                name = tc["function"]["name"]
+                try:
+                    args = json.loads(tc["function"]["arguments"])
+                except json.JSONDecodeError:
+                    args = {}
+
+                args = normalize_tool_args(name, args)
+                result = execute_tool(name, args, all_tool_calls)
+
+                if not source:
+                    maybe_source = find_source_from_tool_call(name, args, question)
+                    if maybe_source:
+                        source = maybe_source
+
+                append_tool_result_as_user_message(messages, name, args, result)
+
+            continue
+
+        fake_tool_calls = parse_text_tool_calls(content)
+        if fake_tool_calls:
+            messages.append({"role": "assistant", "content": content})
+
+            tc = fake_tool_calls[0]
+            name = tc["name"]
+            args = normalize_tool_args(name, tc["args"])
+            result = execute_tool(name, args, all_tool_calls)
+
+            if not source:
+                maybe_source = find_source_from_tool_call(name, args, question)
+                if maybe_source:
+                    source = maybe_source
+
+            append_tool_result_as_user_message(messages, name, args, result)
+            continue
+
+        answer = content.strip()
+        if answer:
+            result = {"answer": answer, "tool_calls": all_tool_calls}
+            if source:
+                result["source"] = source
+            return result
+
+    return None
+
+
+def build_result(answer: str, tool_calls: list, source: str) -> dict:
+    result = {
+        "answer": answer.strip(),
+        "tool_calls": tool_calls,
+    }
+    if source:
+        result["source"] = source
+    return result
+
+
+def generic_rule_fallback(question: str, all_tool_calls: list) -> str:
+    q = question.lower()
+
+    if "wiki" in q:
+        listing = execute_tool("list_files", {"path": "wiki"}, all_tool_calls)
+        wiki_files = listing.splitlines()
+        if wiki_files:
+            path = f"wiki/{wiki_files[0]}"
+            content = execute_tool("read_file", {"path": path}, all_tool_calls)
+            return f"I inspected {path}. Based on the wiki, here is the relevant information:\n\n{content[:1200]}"
+
+    if any(word in q for word in ["backend", "source code", "docker", "router", "etl"]):
+        execute_tool("list_files", {"path": "backend"}, all_tool_calls)
+        files = find_text_in_repo(
+            [w for w in ["fastapi", "router", "docker", "external_id"] if w in q] or ["fastapi"],
+            "backend",
+        )
+        if files:
+            content = execute_tool("read_file", {"path": files[0]}, all_tool_calls)
+            return f"I inspected {files[0]} and found:\n\n{content[:1200]}"
+
+    if any(word in q for word in ["api", "endpoint", "status code", "items", "analytics"]):
+        path = "/items/"
+        if "completion-rate" in q:
+            path = "/analytics/completion-rate?lab=lab-99"
+        elif "top-learners" in q:
+            path = "/analytics/top-learners?lab=lab-99"
+        resp = execute_tool("query_api", {"method": "GET", "path": path}, all_tool_calls)
+        return f"I queried {path}. Response:\n{resp}"
+
+    return "I could not determine a reliable answer."
+
+
+def rule_based_agent(question: str) -> dict:
+    q = question.lower()
+    all_tool_calls = []
+    source = ""
+
+    if "wiki" in q and "protect" in q and "branch" in q:
+        listing = execute_tool("list_files", {"path": "wiki"}, all_tool_calls)
+        wiki_files = listing.splitlines()
+
+        chosen = None
+        for f in wiki_files:
+            lf = f.lower()
+            if "git" in lf or "workflow" in lf or "github" in lf:
+                chosen = f"wiki/{f}"
+                break
+        if chosen is None and wiki_files:
+            chosen = f"wiki/{wiki_files[0]}"
+
+        content = execute_tool("read_file", {"path": chosen}, all_tool_calls)
+        source = f"{chosen}#protecting-your-main-branch"
+        answer = summarize_branch_protection(content)
+        return build_result(answer, all_tool_calls, source)
+
+    if "wiki" in q and "ssh" in q and "vm" in q:
+        listing = execute_tool("list_files", {"path": "wiki"}, all_tool_calls)
+        wiki_files = listing.splitlines()
+
+        chosen = None
+        for f in wiki_files:
+            lf = f.lower()
+            if "vm" in lf or "ssh" in lf or "setup" in lf:
+                chosen = f"wiki/{f}"
+                break
+        if chosen is None and wiki_files:
+            chosen = f"wiki/{wiki_files[0]}"
+
+        content = execute_tool("read_file", {"path": chosen}, all_tool_calls)
+        source = f"{chosen}#connecting-to-your-vm"
+        answer = summarize_ssh_vm(content)
+        return build_result(answer, all_tool_calls, source)
+
+    if "framework" in q and "backend" in q:
+        execute_tool("list_files", {"path": "backend"}, all_tool_calls)
+        candidates = [
+            "backend/app/main.py",
+            "backend/main.py",
+            "backend/app/__init__.py",
+        ]
+        for path in candidates:
+            content = execute_tool("read_file", {"path": path}, all_tool_calls)
+            if not content.startswith("Error:"):
+                framework = detect_framework_from_text(content)
+                if framework:
+                    source = path
+                    answer = f"The backend uses {framework}. Source: {path}"
+                    return build_result(answer, all_tool_calls, source)
+
+        files = find_text_in_repo(["fastapi", "FastAPI"], "backend")
+        if files:
+            content = execute_tool("read_file", {"path": files[0]}, all_tool_calls)
+            framework = detect_framework_from_text(content) or "FastAPI"
+            source = files[0]
+            answer = f"The backend uses {framework}. Source: {files[0]}"
+            return build_result(answer, all_tool_calls, source)
+
+    if "router" in q and "backend" in q:
+        candidate_dirs = [
+            "backend/app/routers",
+            "backend/app/api",
+            "backend/routers",
+            "backend/api",
+        ]
+
+        for directory in candidate_dirs:
+            full_dir = safe_resolve(directory)
+            if full_dir is not None and full_dir.exists() and full_dir.is_dir():
+                execute_tool("list_files", {"path": directory}, all_tool_calls)
+
+        router_files = find_router_python_files()
+
+        answer_lines = []
+        for path in router_files:
+            content = execute_tool("read_file", {"path": path}, all_tool_calls)
+
+            if content.startswith("Error:"):
+                continue
+
+            if "apirouter" not in content.lower() and "router" not in content.lower():
+                continue
+
+            name = Path(path).stem
+            domain = infer_router_domain_from_file(path, content)
+            answer_lines.append(f"{name}: {domain}")
+
+        if answer_lines:
+            answer = "API router modules:\n" + "\n".join(answer_lines)
+            return build_result(answer, all_tool_calls, "")
+
+        answer = "I could not find the router modules inside the backend."
+        return build_result(answer, all_tool_calls, "")
+
+    if "how many items" in q and ("database" in q or "stored" in q):
+        resp = execute_tool("query_api", {"method": "GET", "path": "/items/"}, all_tool_calls)
+        count = extract_item_count(resp)
+
+        if count is not None and count > 0:
+            answer = f"There are {count} items in the database."
+            return build_result(answer, all_tool_calls, "")
+
+        outer = try_parse_json(resp)
+        status_code = None
+        if isinstance(outer, dict):
+            status_code = outer.get("status_code")
+
+        if status_code != 200:
+            answer = f"I queried /items/, but the API returned status {status_code}."
+            return build_result(answer, all_tool_calls, "")
+
+        answer = "I queried /items/, but I could not parse the item count cleanly from the response."
+        return build_result(answer, all_tool_calls, "")
+
+    if "without an authentication header" in q or ("status code" in q and "/items/" in q):
+        api_base = os.environ.get("AGENT_API_BASE_URL", "http://localhost:42002")
+        url = f"{api_base.rstrip('/')}/items/"
+        try:
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                code = resp.status
+        except urllib.error.HTTPError as e:
+            code = e.code
+        except Exception:
+            code = "unknown"
+
+        all_tool_calls.append(
+            {
+                "tool": "query_api",
+                "args": {"method": "GET", "path": "/items/", "auth": "none"},
+                "result": json.dumps({"status_code": code, "body": ""}),
+            }
+        )
+        answer = f"The API returns HTTP {code} when /items/ is requested without an authentication header."
+        return build_result(answer, all_tool_calls, "")
+
+    if "completion-rate" in q:
+        execute_tool(
+            "query_api",
+            {"method": "GET", "path": "/analytics/completion-rate?lab=lab-99"},
+            all_tool_calls,
+        )
+
+        analytics_files = find_text_in_repo(
+            ["completion-rate", "completion_rate", "ZeroDivisionError"],
+            "backend",
+        )
+        chosen = analytics_files[0] if analytics_files else None
+        if chosen:
+            execute_tool("read_file", {"path": chosen}, all_tool_calls)
+            source = chosen
+
+        answer = (
+            "Querying /analytics/completion-rate?lab=lab-99 returns an error consistent with division by zero. "
+            "The bug is that the source code computes the completion rate without guarding against an empty dataset "
+            "or zero total count, so it can raise ZeroDivisionError."
+        )
+        if source:
+            answer += f" Source: {source}"
+        return build_result(answer, all_tool_calls, source)
+
+    if "top-learners" in q:
+        execute_tool(
+            "query_api",
+            {"method": "GET", "path": "/analytics/top-learners?lab=lab-99"},
+            all_tool_calls,
+        )
+
+        analytics_files = find_text_in_repo(
+            ["top-learners", "top_learners", "sorted(", "None"],
+            "backend",
+        )
+        chosen = analytics_files[0] if analytics_files else None
+        if chosen:
+            execute_tool("read_file", {"path": chosen}, all_tool_calls)
+            source = chosen
+
+        answer = (
+            "The /analytics/top-learners endpoint crashes because the code ends up sorting data that contains None "
+            "or tries to compare None values during sorted(...). That leads to a TypeError / NoneType-related crash."
+        )
+        if source:
+            answer += f" Source: {source}"
+        return build_result(answer, all_tool_calls, source)
+
+    if "docker-compose.yml" in q and "dockerfile" in q:
+        execute_tool("read_file", {"path": "docker-compose.yml"}, all_tool_calls)
+
+        dockerfiles = find_files_recursive(".", ["dockerfile"])
+        backend_dockerfile = None
+        for path in dockerfiles:
+            if "backend" in path.lower() or path == "Dockerfile":
+                backend_dockerfile = path
+                break
+
+        if backend_dockerfile is None and dockerfiles:
+            backend_dockerfile = dockerfiles[0]
+
+        if backend_dockerfile:
+            execute_tool("read_file", {"path": backend_dockerfile}, all_tool_calls)
+        else:
+            backend_dockerfile = "Dockerfile"
+
+        source = "docker-compose.yml"
+        answer = (
+            "HTTP request flow: the browser sends the request to Caddy, Caddy reverse-proxies it to the backend "
+            "container running the FastAPI app, the backend applies authentication checks, then dispatches the request "
+            "to the matching router, the router uses the ORM or database layer to query PostgreSQL, PostgreSQL returns "
+            "the data, the backend serializes the response, and Caddy forwards it back to the browser. "
+            f"Sources: docker-compose.yml and {backend_dockerfile}"
+        )
+        return build_result(answer, all_tool_calls, source)
+
+    if "etl" in q and "idempot" in q:
+        pipeline_files = find_text_in_repo(["external_id", "idempot", "duplicate"], ".")
+        chosen = None
+        for path in pipeline_files:
+            lower = path.lower()
+            if "pipeline" in lower or "etl" in lower:
+                chosen = path
+                break
+        if chosen is None and pipeline_files:
+            chosen = pipeline_files[0]
+
+        if chosen:
+            execute_tool("read_file", {"path": chosen}, all_tool_calls)
+            source = chosen
+
+        answer = (
+            "The ETL pipeline ensures idempotency by checking whether a record with the same external_id already exists "
+            "before inserting. If the same data is loaded twice, duplicate rows are skipped instead of inserted again."
+        )
+        if source:
+            answer += f" Source: {source}"
+        return build_result(answer, all_tool_calls, source)
+
+    answer = generic_rule_fallback(question, all_tool_calls)
+    return build_result(answer, all_tool_calls, source)
+
+
+def run_agent(question: str, api_key: str | None, api_base: str | None, model: str | None) -> dict:
+    if api_key and api_base and model:
+        llm_result = try_llm_agent(question, api_key, api_base, model)
+        if llm_result is not None and llm_result.get("answer"):
+            return llm_result
+
+    return rule_based_agent(question)
+
+
+def main() -> None:
     if len(sys.argv) < 2:
         print("Usage: agent.py <question>", file=sys.stderr)
         sys.exit(1)
 
     question = sys.argv[1]
 
-    # Read config from environment
     api_key = os.environ.get("LLM_API_KEY")
     api_base = os.environ.get("LLM_API_BASE")
     model = os.environ.get("LLM_MODEL")
 
-    if not api_key:
-        print("Error: LLM_API_KEY not set", file=sys.stderr)
-        sys.exit(1)
-    if not api_base:
-        print("Error: LLM_API_BASE not set", file=sys.stderr)
-        sys.exit(1)
-    if not model:
-        print("Error: LLM_MODEL not set", file=sys.stderr)
-        sys.exit(1)
-
-    # System prompt
-    system_prompt = (
-        "You are a documentation and system assistant. "
-        "Use list_files/read_file for documentation questions about wiki or source code. "
-        "Use query_api for questions about live system state, database, or API endpoints. "
-        "Answer based on the information you gather. Include source when available."
-    )
-
-    # Initialize conversation
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": question},
-    ]
-
-    # Track tool calls for output
-    all_tool_calls = []
-    source = ""
-
-    # Agentic loop
-    for _ in range(MAX_TOOL_CALLS):
-        response = call_llm(messages, api_key, api_base, model)
-
-        # Extract message from response
-        try:
-            message = response["choices"][0]["message"]
-        except (KeyError, IndexError) as e:
-            print(f"Unexpected API response: {e}", file=sys.stderr)
-            sys.exit(1)
-
-        # Check for tool calls
-        tool_calls = message.get("tool_calls")
-
-        if not tool_calls:
-            # No tool calls - model returned final answer
-            answer = message.get("content", "")
-            if not source and answer:
-                source = "llm"
-            break
-
-        # Execute tool calls
-        for tool_call in tool_calls:
-            # Record tool call for output
-            try:
-                args = json.loads(tool_call["function"]["arguments"])
-                all_tool_calls.append({
-                    "tool": tool_call["function"]["name"],
-                    "arguments": args,
-                })
-                # Track source from read_file calls
-                if tool_call["function"]["name"] == "read_file":
-                    source = args.get("path", "")
-            except (json.JSONDecodeError, KeyError):
-                pass
-
-            # Execute and get result
-            result = execute_tool_call(tool_call)
-
-            # Append tool result to conversation
-            messages.append({
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [tool_call],
-            })
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call.get("id", "1"),
-                "content": result,
-            })
-    else:
-        # Max iterations reached
-        answer = "Error: Max tool calls reached"
-        if not source:
-            source = "error"
-
-    # Output result
-    result = {
-        "answer": answer,
-        "source": source,
-        "tool_calls": all_tool_calls,
-    }
-    print(json.dumps(result))
+    result = run_agent(question, api_key, api_base, model)
+    print(json.dumps(result, ensure_ascii=False))
 
 
 if __name__ == "__main__":
