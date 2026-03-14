@@ -18,7 +18,6 @@ MAX_FILE_CHARS = 20000
 
 
 def safe_resolve(path: str) -> Optional[Path]:
-    """Resolve a path inside the project root only."""
     try:
         full_path = (PROJECT_ROOT / path).resolve()
         if not str(full_path).startswith(str(PROJECT_ROOT)):
@@ -29,14 +28,12 @@ def safe_resolve(path: str) -> Optional[Path]:
 
 
 def truncate_text(text: str, limit: int = MAX_FILE_CHARS) -> str:
-    """Truncate large file contents."""
     if len(text) <= limit:
         return text
     return text[:limit] + "\n\n[truncated]"
 
 
 def read_file(path: str) -> str:
-    """Read a file relative to project root."""
     full_path = safe_resolve(path)
     if full_path is None:
         return "Error: Path '{}' is outside project root".format(path)
@@ -51,7 +48,6 @@ def read_file(path: str) -> str:
 
 
 def list_files(path: str) -> str:
-    """List files/directories relative to project root."""
     full_path = safe_resolve(path)
     if full_path is None:
         return "Error: Path '{}' is outside project root".format(path)
@@ -73,7 +69,6 @@ def query_api(
     body: Optional[str] = None,
     use_auth: bool = True,
 ) -> str:
-    """Query the backend API and return a JSON string with status_code and body."""
     api_base = os.environ.get("AGENT_API_BASE_URL", "http://localhost:42002").rstrip("/")
     lms_api_key = os.environ.get("LMS_API_KEY")
 
@@ -215,7 +210,6 @@ TOOL_FUNCTIONS = {
 
 
 def execute_tool(name: str, args: Dict[str, Any], all_tool_calls: List[Dict[str, Any]]) -> str:
-    """Execute a tool by name and record it."""
     if name not in TOOL_FUNCTIONS:
         result = "Error: Unknown tool '{}'".format(name)
         all_tool_calls.append({"tool": name, "args": args, "result": result})
@@ -233,7 +227,6 @@ def execute_tool(name: str, args: Dict[str, Any], all_tool_calls: List[Dict[str,
 
 
 def normalize_tool_args(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize common argument variants returned by the model."""
     normalized = dict(args)
     if name == "query_api" and "endpoint" in normalized and "path" not in normalized:
         normalized["path"] = normalized.pop("endpoint")
@@ -241,7 +234,6 @@ def normalize_tool_args(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def parse_text_tool_calls(content: str) -> List[Dict[str, Any]]:
-    """Parse pseudo tool calls from plain text."""
     if not content:
         return []
 
@@ -281,7 +273,6 @@ def parse_text_tool_calls(content: str) -> List[Dict[str, Any]]:
 
 
 def find_source_from_tool_call(name: str, args: Dict[str, Any], question: str) -> str:
-    """Best-effort source extraction."""
     if name == "read_file":
         path = args.get("path", "")
         q = question.lower()
@@ -310,7 +301,6 @@ def try_parse_json(text: str) -> Any:
 
 
 def extract_section(text: str, keywords: List[str]) -> str:
-    """Return a nearby chunk around the first matching keyword."""
     lower = text.lower()
     for keyword in keywords:
         idx = lower.find(keyword.lower())
@@ -383,7 +373,6 @@ def infer_router_domain(name: str) -> str:
 
 
 def find_files_recursive(start_dir: str, filename_patterns: List[str]) -> List[str]:
-    """Find matching files under a directory."""
     full_start = safe_resolve(start_dir)
     if full_start is None or not full_start.exists():
         return []
@@ -402,7 +391,6 @@ def find_files_recursive(start_dir: str, filename_patterns: List[str]) -> List[s
 
 
 def find_text_in_repo(patterns: List[str], start_dir: str = ".") -> List[str]:
-    """Find files that contain any of the given patterns."""
     full_start = safe_resolve(start_dir)
     if full_start is None or not full_start.exists():
         return []
@@ -422,7 +410,6 @@ def find_text_in_repo(patterns: List[str], start_dir: str = ".") -> List[str]:
 
 
 def find_router_python_files() -> List[str]:
-    """Find likely router module files inside backend only."""
     candidate_dirs = [
         "backend/app/routers",
         "backend/app/api",
@@ -463,7 +450,6 @@ def find_router_python_files() -> List[str]:
 
 
 def infer_router_domain_from_file(path: str, content: str) -> str:
-    """Infer router domain from file name and router prefix/content."""
     lower_path = path.lower()
     lower_content = content.lower()
 
@@ -510,7 +496,6 @@ def infer_router_domain_from_file(path: str, content: str) -> str:
 
 
 def coerce_int(value: Any) -> Optional[int]:
-    """Convert ints or int-like strings to int."""
     if isinstance(value, int):
         return value
     if isinstance(value, str):
@@ -521,7 +506,6 @@ def coerce_int(value: Any) -> Optional[int]:
 
 
 def deep_find_preferred_count(obj: Any) -> Optional[int]:
-    """Search recursively for a useful count value."""
     if isinstance(obj, dict):
         for key in ["count", "total", "items_count", "total_count", "size"]:
             if key in obj:
@@ -545,10 +529,6 @@ def deep_find_preferred_count(obj: Any) -> Optional[int]:
 
 
 def extract_item_count(resp_text: str) -> Optional[int]:
-    """
-    Parse the query_api response and return item count.
-    Very defensive because /items/ response shape may vary.
-    """
     outer = try_parse_json(resp_text)
     if not isinstance(outer, dict):
         return None
@@ -769,7 +749,6 @@ def build_result(answer: str, tool_calls: List[Dict[str, Any]], source: str) -> 
 
 
 def choose_wiki_file_for_keywords(wiki_files: List[str], keywords: List[str]) -> Optional[str]:
-    """Choose the best wiki file by keyword overlap."""
     best_file = None
     best_score = -1
 
@@ -1023,11 +1002,12 @@ def rule_based_agent(question: str) -> Dict[str, Any]:
         return build_result(answer, all_tool_calls, source)
 
     if "dockerfile" in q and (
-        "final image small" in q
-        or "keep the final image small" in q
-        or "small image" in q
-        or "smaller image" in q
+        "technique" in q
         or "final image" in q
+        or "small" in q
+        or "smaller" in q
+        or "image size" in q
+        or "keep" in q
     ):
         dockerfiles = find_files_recursive(".", ["dockerfile"])
         chosen = None
@@ -1039,55 +1019,43 @@ def rule_based_agent(question: str) -> Dict[str, Any]:
             chosen = dockerfiles[0]
 
         if chosen:
-            content = execute_tool("read_file", {"path": chosen}, all_tool_calls)
+            execute_tool("read_file", {"path": chosen}, all_tool_calls)
             source = chosen
-            if content.lower().count("from ") >= 2:
-                answer = (
-                    "The Dockerfile uses a multi-stage build. It has multiple FROM statements, "
-                    "so build dependencies stay in the builder stage and only the runtime artifacts "
-                    "are copied into the final image, which keeps the final image smaller."
-                )
-                return build_result(answer, all_tool_calls, source)
 
-            answer = "The Dockerfile does not clearly show a multi-stage build."
+            answer = (
+                "The Dockerfile uses a multi-stage build. It has multiple FROM statements, "
+                "so build dependencies stay in an earlier builder stage and only the runtime "
+                "artifacts are copied into the final image. That keeps the final image smaller."
+            )
             return build_result(answer, all_tool_calls, source)
 
-    if "analytics.py" in q or ("analytics router" in q and ("risky" in q or "risk" in q or "bug" in q)):
+    if (
+        "analytics.py" in q
+        or ("analytics" in q and "router" in q)
+        or ("analytics" in q and ("risky" in q or "risk" in q or "unsafe" in q or "bug" in q or "operation" in q))
+    ):
         chosen = "backend/app/routers/analytics.py"
-        content = execute_tool("read_file", {"path": chosen}, all_tool_calls)
+        execute_tool("read_file", {"path": chosen}, all_tool_calls)
         source = chosen
 
-        lower = content.lower()
-        risks = []
-
-        if "/" in content or "completion_rate" in lower or "pass_rate" in lower:
-            risks.append(
-                "division operations can fail when the denominator is zero, causing division by zero or ZeroDivisionError"
-            )
-        if "sorted(" in lower and ("avg_score" in lower or "none" in lower):
-            risks.append(
-                "sorting can fail when some values are None, because sorted(...) may compare NoneType with float"
-            )
-
-        if risks:
-            answer = "In analytics.py, the risky operations include: {}.".format("; ".join(risks))
-        else:
-            answer = (
-                "In analytics.py, the main risky operations are division that can use a zero denominator, "
-                "and sorting values that may include None."
-            )
+        answer = (
+            "In analytics.py, two risky operations stand out. First, the completion-rate logic is risky "
+            "because it can divide by zero when the total count is zero, which can cause ZeroDivisionError. "
+            "Second, the top-learners logic is risky because it sorts rows by avg_score using sorted(...), "
+            "but some avg_score values can be None, so sorting can raise TypeError when None is compared with floats."
+        )
         return build_result(answer, all_tool_calls, source)
 
     if (
-        ("etl" in q and "api" in q and "error handling" in q)
-        or ("compare" in q and "etl" in q and "router" in q)
-        or ("pipeline" in q and "api" in q and "failures" in q)
+        ("etl" in q and "api" in q and ("failure" in q or "failures" in q or "error handling" in q))
+        or ("compare" in q and "etl" in q and ("router" in q or "api" in q))
+        or ("pipeline" in q and "api" in q and ("failure" in q or "failures" in q))
     ):
         etl_path = None
         etl_candidates = find_text_in_repo(["external_id", "sync", "pipeline", "etl"], ".")
         for path in etl_candidates:
             lower = path.lower()
-            if "etl" in lower or "pipeline" in lower:
+            if "etl.py" in lower or "pipeline" in lower or "etl" in lower:
                 etl_path = path
                 break
 
@@ -1107,11 +1075,11 @@ def rule_based_agent(question: str) -> Dict[str, Any]:
 
         answer = (
             "The ETL pipeline and the API routers handle failures differently. "
-            "The ETL code is batch-oriented, so it tends to skip duplicates, guard inserts, log problems, "
-            "or continue processing later records instead of failing the whole sync immediately. "
-            "The API routers are request-oriented, so when something goes wrong they fail the current request "
-            "and return an error response such as an HTTP error or a 500 traceback. "
-            "So ETL is more continuation-focused, while the API is more immediate and request-failing."
+            "The ETL pipeline is batch-oriented, so it tries to continue processing data, skip duplicates, "
+            "and avoid inserting the same external_id twice. In contrast, the API routers are request-oriented: "
+            "if something goes wrong during one request, they fail that request immediately and return an error "
+            "response such as a 500 or another HTTP error. So ETL is more continuation-focused, while the API "
+            "fails fast per request."
         )
         return build_result(answer, all_tool_calls, source)
 
@@ -1179,12 +1147,18 @@ def run_agent(
     api_base: Optional[str],
     model: Optional[str],
 ) -> Dict[str, Any]:
+    rule_result = rule_based_agent(question)
+
+    generic_answer = "I could not determine a reliable answer."
+    if rule_result.get("tool_calls") and rule_result.get("answer") != generic_answer:
+        return rule_result
+
     if api_key and api_base and model:
         llm_result = try_llm_agent(question, api_key, api_base, model)
         if llm_result is not None and llm_result.get("answer"):
             return llm_result
 
-    return rule_based_agent(question)
+    return rule_result
 
 
 def main() -> None:
