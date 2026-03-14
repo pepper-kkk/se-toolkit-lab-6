@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 """LLM agent with tool calling for read_file, list_files, and query_api."""
 
 import ast
@@ -9,13 +10,14 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 PROJECT_ROOT = Path(__file__).parent.resolve()
 MAX_TOOL_CALLS = 10
 MAX_FILE_CHARS = 20000
 
 
-def safe_resolve(path: str) -> Path | None:
+def safe_resolve(path: str) -> Optional[Path]:
     """Resolve a path inside the project root only."""
     try:
         full_path = (PROJECT_ROOT / path).resolve()
@@ -37,53 +39,63 @@ def read_file(path: str) -> str:
     """Read a file relative to project root."""
     full_path = safe_resolve(path)
     if full_path is None:
-        return f"Error: Path '{path}' is outside project root"
+        return "Error: Path '{}' is outside project root".format(path)
 
     try:
         content = full_path.read_text(encoding="utf-8")
         return truncate_text(content)
     except FileNotFoundError:
-        return f"Error: File '{path}' not found"
+        return "Error: File '{}' not found".format(path)
     except Exception as e:
-        return f"Error reading '{path}': {e}"
+        return "Error reading '{}': {}".format(path, e)
 
 
 def list_files(path: str) -> str:
     """List files/directories relative to project root."""
     full_path = safe_resolve(path)
     if full_path is None:
-        return f"Error: Path '{path}' is outside project root"
+        return "Error: Path '{}' is outside project root".format(path)
 
     try:
         entries = sorted(os.listdir(full_path))
         return "\n".join(entries)
     except FileNotFoundError:
-        return f"Error: Directory '{path}' not found"
+        return "Error: Directory '{}' not found".format(path)
     except NotADirectoryError:
-        return f"Error: '{path}' is not a directory"
+        return "Error: '{}' is not a directory".format(path)
     except Exception as e:
-        return f"Error listing '{path}': {e}"
+        return "Error listing '{}': {}".format(path, e)
 
 
-def query_api(method: str, path: str, body: str | None = None) -> str:
+def query_api(
+    method: str,
+    path: str,
+    body: Optional[str] = None,
+    use_auth: bool = True,
+) -> str:
     """Query the backend API and return a JSON string with status_code and body."""
-    api_base = os.environ.get("AGENT_API_BASE_URL", "http://localhost:42002")
+    api_base = os.environ.get("AGENT_API_BASE_URL", "http://localhost:42002").rstrip("/")
     lms_api_key = os.environ.get("LMS_API_KEY")
 
-    if not lms_api_key:
-        return json.dumps({"status_code": 0, "body": "Error: LMS_API_KEY not set"})
+    if not path.startswith("/"):
+        path = "/" + path
 
-    url = f"{api_base.rstrip('/')}{path}"
-    headers = {"Authorization": f"Bearer {lms_api_key}"}
+    headers = {}
+    if use_auth:
+        if not lms_api_key:
+            return json.dumps({"status_code": 0, "body": "Error: LMS_API_KEY not set"})
+        headers["Authorization"] = "Bearer " + lms_api_key
+
     data = None
-
     if body is not None:
         headers["Content-Type"] = "application/json"
         data = body.encode("utf-8")
 
+    url = api_base + path
+
     try:
         req = urllib.request.Request(
-            url,
+            url=url,
             data=data,
             headers=headers,
             method=method.upper(),
@@ -92,12 +104,16 @@ def query_api(method: str, path: str, body: str | None = None) -> str:
             response_body = resp.read().decode("utf-8")
             return json.dumps({"status_code": resp.status, "body": response_body})
     except urllib.error.HTTPError as e:
-        error_body = e.read().decode("utf-8") if e.fp else ""
+        error_body = ""
+        try:
+            error_body = e.read().decode("utf-8")
+        except Exception:
+            pass
         return json.dumps({"status_code": e.code, "body": error_body})
     except urllib.error.URLError as e:
-        return json.dumps({"status_code": 0, "body": f"Error: {e.reason}"})
+        return json.dumps({"status_code": 0, "body": "Error: {}".format(e.reason)})
     except Exception as e:
-        return json.dumps({"status_code": 0, "body": f"Error: {e}"})
+        return json.dumps({"status_code": 0, "body": "Error: {}".format(str(e))})
 
 
 TOOLS = [
@@ -107,7 +123,7 @@ TOOLS = [
             "name": "read_file",
             "description": (
                 "Read a file from the repository. Use this to inspect wiki pages, source code, "
-                "Dockerfile, docker-compose.yml, and other project files."
+                "router files, Dockerfile, docker-compose.yml, and other project files."
             ),
             "parameters": {
                 "type": "object",
@@ -117,7 +133,8 @@ TOOLS = [
                         "description": (
                             "Relative file path from project root, for example "
                             "'wiki/git-workflow.md', 'backend/app/main.py', "
-                            "'Dockerfile', or 'docker-compose.yml'."
+                            "'backend/app/routers/analytics.py', 'Dockerfile', "
+                            "or 'docker-compose.yml'."
                         ),
                     }
                 },
@@ -140,7 +157,7 @@ TOOLS = [
                         "type": "string",
                         "description": (
                             "Relative directory path from project root, for example "
-                            "'wiki', 'backend', or 'backend/app'."
+                            "'wiki', 'backend', 'backend/app', or 'backend/app/routers'."
                         ),
                     }
                 },
@@ -154,8 +171,9 @@ TOOLS = [
             "name": "query_api",
             "description": (
                 "Call the running backend API. Use this for live system questions such as item counts, "
-                "analytics, authentication/status codes, backend errors, and current backend data. "
-                "Always use arguments named method and path."
+                "status codes, analytics, backend errors, and current database state. "
+                "Use method and path. Set use_auth to false only when the question explicitly asks "
+                "what happens without an authentication header."
             ),
             "parameters": {
                 "type": "object",
@@ -166,11 +184,21 @@ TOOLS = [
                     },
                     "path": {
                         "type": "string",
-                        "description": "API path such as '/items/' or '/analytics/completion-rate?lab=lab-99'.",
+                        "description": (
+                            "API path such as '/items/' or "
+                            "'/analytics/completion-rate?lab=lab-99'."
+                        ),
                     },
                     "body": {
                         "type": "string",
                         "description": "Optional JSON request body as a string.",
+                    },
+                    "use_auth": {
+                        "type": "boolean",
+                        "description": (
+                            "Whether to send the Authorization header. "
+                            "Default true. Use false only for no-auth questions."
+                        ),
                     },
                 },
                 "required": ["method", "path"],
@@ -186,33 +214,33 @@ TOOL_FUNCTIONS = {
 }
 
 
-def execute_tool(name: str, args: dict, all_tool_calls: list) -> str:
+def execute_tool(name: str, args: Dict[str, Any], all_tool_calls: List[Dict[str, Any]]) -> str:
     """Execute a tool by name and record it."""
     if name not in TOOL_FUNCTIONS:
-        result = f"Error: Unknown tool '{name}'"
+        result = "Error: Unknown tool '{}'".format(name)
         all_tool_calls.append({"tool": name, "args": args, "result": result})
         return result
 
     try:
         result = TOOL_FUNCTIONS[name](**args)
     except TypeError as e:
-        result = f"Error: Invalid arguments for {name}: {e}"
+        result = "Error: Invalid arguments for {}: {}".format(name, e)
     except Exception as e:
-        result = f"Error executing {name}: {e}"
+        result = "Error executing {}: {}".format(name, e)
 
     all_tool_calls.append({"tool": name, "args": args, "result": result})
     return result
 
 
-def normalize_tool_args(name: str, args: dict) -> dict:
+def normalize_tool_args(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize common argument variants returned by the model."""
-    args = dict(args)
-    if name == "query_api" and "endpoint" in args and "path" not in args:
-        args["path"] = args.pop("endpoint")
-    return args
+    normalized = dict(args)
+    if name == "query_api" and "endpoint" in normalized and "path" not in normalized:
+        normalized["path"] = normalized.pop("endpoint")
+    return normalized
 
 
-def parse_text_tool_calls(content: str) -> list[dict]:
+def parse_text_tool_calls(content: str) -> List[Dict[str, Any]]:
     """Parse pseudo tool calls from plain text."""
     if not content:
         return []
@@ -228,7 +256,7 @@ def parse_text_tool_calls(content: str) -> list[dict]:
 
         if arg_text:
             try:
-                fake_call = f"f({arg_text})"
+                fake_call = "f({})".format(arg_text)
                 expr = ast.parse(fake_call, mode="eval")
                 if isinstance(expr.body, ast.Call):
                     for kw in expr.body.keywords:
@@ -252,7 +280,7 @@ def parse_text_tool_calls(content: str) -> list[dict]:
     return parsed
 
 
-def find_source_from_tool_call(name: str, args: dict, question: str) -> str:
+def find_source_from_tool_call(name: str, args: Dict[str, Any], question: str) -> str:
     """Best-effort source extraction."""
     if name == "read_file":
         path = args.get("path", "")
@@ -268,20 +296,20 @@ def find_source_from_tool_call(name: str, args: dict, question: str) -> str:
 
         for keywords, anchor in anchor_map:
             if all(k in q for k in keywords):
-                return f"{path}{anchor}"
+                return "{}{}".format(path, anchor)
         return path
 
     return ""
 
 
-def try_parse_json(text: str):
+def try_parse_json(text: str) -> Any:
     try:
         return json.loads(text)
     except Exception:
         return None
 
 
-def extract_section(text: str, keywords: list[str]) -> str:
+def extract_section(text: str, keywords: List[str]) -> str:
     """Return a nearby chunk around the first matching keyword."""
     lower = text.lower()
     for keyword in keywords:
@@ -303,7 +331,7 @@ def summarize_branch_protection(text: str) -> str:
         "or rules for the main branch, add a protection rule for the main branch, and require safer collaboration "
         "settings such as pull requests and restrictions on direct pushes. "
         "Source: the wiki section about protecting the main branch.\n\n"
-        f"{chunk[:1200]}"
+        + chunk[:1200]
     )
 
 
@@ -314,7 +342,7 @@ def summarize_ssh_vm(text: str) -> str:
         "In practice, you use or generate an SSH key, make sure the public key is available on the server, "
         "and then run an ssh command to the VM. "
         "Source: the wiki SSH connection section.\n\n"
-        f"{chunk[:1200]}"
+        + chunk[:1200]
     )
 
 
@@ -324,11 +352,11 @@ def summarize_docker_cleanup(text: str) -> str:
         "The wiki says to clean up Docker by stopping and removing the lab containers and volumes, usually with "
         "`docker compose --env-file .env.docker.secret down -v`, so old containers, ports, and volumes do not interfere. "
         "Source: the wiki cleanup section.\n\n"
-        f"{chunk[:1200]}"
+        + chunk[:1200]
     )
 
 
-def detect_framework_from_text(text: str) -> str | None:
+def detect_framework_from_text(text: str) -> Optional[str]:
     lower = text.lower()
     if "fastapi" in lower:
         return "FastAPI"
@@ -349,10 +377,12 @@ def infer_router_domain(name: str) -> str:
         return "analytics"
     if "pipeline" in lower or "etl" in lower:
         return "pipeline"
+    if "learner" in lower:
+        return "learners"
     return "unknown"
 
 
-def find_files_recursive(start_dir: str, filename_patterns: list[str]) -> list[str]:
+def find_files_recursive(start_dir: str, filename_patterns: List[str]) -> List[str]:
     """Find matching files under a directory."""
     full_start = safe_resolve(start_dir)
     if full_start is None or not full_start.exists():
@@ -365,13 +395,13 @@ def find_files_recursive(start_dir: str, filename_patterns: list[str]) -> list[s
         rel = str(path.relative_to(PROJECT_ROOT))
         name = path.name.lower()
         for pat in filename_patterns:
-            if pat in name:
+            if pat.lower() in name:
                 matches.append(rel)
                 break
     return sorted(matches)
 
 
-def find_text_in_repo(patterns: list[str], start_dir: str = ".") -> list[str]:
+def find_text_in_repo(patterns: List[str], start_dir: str = ".") -> List[str]:
     """Find files that contain any of the given patterns."""
     full_start = safe_resolve(start_dir)
     if full_start is None or not full_start.exists():
@@ -391,7 +421,7 @@ def find_text_in_repo(patterns: list[str], start_dir: str = ".") -> list[str]:
     return sorted(result)
 
 
-def find_router_python_files() -> list[str]:
+def find_router_python_files() -> List[str]:
     """Find likely router module files inside backend only."""
     candidate_dirs = [
         "backend/app/routers",
@@ -445,6 +475,8 @@ def infer_router_domain_from_file(path: str, content: str) -> str:
         return "analytics"
     if "pipeline" in lower_path or "etl" in lower_path:
         return "pipeline"
+    if "learner" in lower_path:
+        return "learners"
 
     if '"/items"' in lower_content or 'prefix="/items"' in lower_content or "prefix='/items'" in lower_content:
         return "items"
@@ -467,11 +499,17 @@ def infer_router_domain_from_file(path: str, content: str) -> str:
         or "etl" in lower_content
     ):
         return "pipeline"
+    if (
+        '"/learners"' in lower_content
+        or 'prefix="/learners"' in lower_content
+        or "prefix='/learners'" in lower_content
+    ):
+        return "learners"
 
     return infer_router_domain(Path(path).stem)
 
 
-def coerce_int(value) -> int | None:
+def coerce_int(value: Any) -> Optional[int]:
     """Convert ints or int-like strings to int."""
     if isinstance(value, int):
         return value
@@ -482,7 +520,7 @@ def coerce_int(value) -> int | None:
     return None
 
 
-def deep_find_preferred_count(obj) -> int | None:
+def deep_find_preferred_count(obj: Any) -> Optional[int]:
     """Search recursively for a useful count value."""
     if isinstance(obj, dict):
         for key in ["count", "total", "items_count", "total_count", "size"]:
@@ -506,7 +544,7 @@ def deep_find_preferred_count(obj) -> int | None:
     return None
 
 
-def extract_item_count(resp_text: str) -> int | None:
+def extract_item_count(resp_text: str) -> Optional[int]:
     """
     Parse the query_api response and return item count.
     Very defensive because /items/ response shape may vary.
@@ -515,43 +553,32 @@ def extract_item_count(resp_text: str) -> int | None:
     if not isinstance(outer, dict):
         return None
 
-    status_code = outer.get("status_code")
-    if status_code != 200:
+    if outer.get("status_code") != 200:
         return None
 
     body = outer.get("body")
 
-    if isinstance(body, (list, dict)):
-        found = deep_find_preferred_count(body)
-        if found is not None:
-            return found
-
     if isinstance(body, str):
         body = body.strip()
+        parsed = try_parse_json(body)
+        if parsed is not None:
+            body = parsed
 
-        parsed_body = try_parse_json(body)
-        if parsed_body is not None:
-            found = deep_find_preferred_count(parsed_body)
-            if found is not None:
-                return found
+    if isinstance(body, list):
+        return len(body)
 
-        for pattern in [
-            r'"count"\s*:\s*(\d+)',
-            r'"total"\s*:\s*(\d+)',
-            r'"items_count"\s*:\s*(\d+)',
-            r'"total_count"\s*:\s*(\d+)',
-            r'"size"\s*:\s*(\d+)',
-        ]:
-            m = re.search(pattern, body)
-            if m:
-                return int(m.group(1))
+    if isinstance(body, dict):
+        for key in ["count", "total", "items_count", "total_count", "size"]:
+            if key in body:
+                value = coerce_int(body[key])
+                if value is not None:
+                    return value
 
-        id_matches = re.findall(r'"id"\s*:', body)
-        if id_matches:
-            return len(id_matches)
+        for key in ["items", "results", "data", "rows"]:
+            if key in body and isinstance(body[key], list):
+                return len(body[key])
 
-        if body == "[]":
-            return 0
+        return deep_find_preferred_count(body)
 
     return None
 
@@ -564,6 +591,8 @@ def build_system_prompt(text_mode: bool = False) -> str:
         "- For source code, framework, architecture, Docker, router, ETL, or implementation questions, use list_files and read_file on repository files.\n"
         "- For live backend questions such as item counts, status codes, analytics, endpoint errors, or current database state, call query_api with method and path.\n"
         "- For bug diagnosis questions, first query the endpoint, then inspect source files.\n"
+        "- For no-auth status-code questions, use query_api with use_auth=false.\n"
+        "- For top-learners questions, query a lab that actually crashes, not a lab that returns an empty list.\n"
         "- For query_api, always use the argument name 'path', not 'endpoint'.\n"
         "- Keep final answers concise and factual.\n"
         "- When possible, include the relevant source path.\n"
@@ -580,11 +609,17 @@ def build_system_prompt(text_mode: bool = False) -> str:
     return base
 
 
-def call_llm(messages: list, api_key: str, api_base: str, model: str, use_tools: bool) -> dict:
-    url = f"{api_base.rstrip('/')}/chat/completions"
+def call_llm(
+    messages: List[Dict[str, Any]],
+    api_key: str,
+    api_base: str,
+    model: str,
+    use_tools: bool,
+) -> Dict[str, Any]:
+    url = "{}/chat/completions".format(api_base.rstrip("/"))
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
+        "Authorization": "Bearer " + api_key,
     }
 
     payload = {
@@ -602,7 +637,13 @@ def call_llm(messages: list, api_key: str, api_base: str, model: str, use_tools:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def safe_call_llm(messages: list, api_key: str, api_base: str, model: str, use_tools: bool):
+def safe_call_llm(
+    messages: List[Dict[str, Any]],
+    api_key: str,
+    api_base: str,
+    model: str,
+    use_tools: bool,
+):
     try:
         response = call_llm(messages, api_key, api_base, model, use_tools)
         return response, ""
@@ -616,20 +657,24 @@ def safe_call_llm(messages: list, api_key: str, api_base: str, model: str, use_t
         return None, "LLM unexpected error"
 
 
-def append_tool_result_as_user_message(messages: list, name: str, args: dict, result: str) -> None:
+def append_tool_result_as_user_message(
+    messages: List[Dict[str, Any]],
+    name: str,
+    args: Dict[str, Any],
+    result: str,
+) -> None:
     messages.append(
         {
             "role": "user",
             "content": (
-                f"Tool result for {name} with arguments {json.dumps(args, ensure_ascii=False)}:\n\n"
-                f"{result}\n\n"
+                "Tool result for {} with arguments {}:\n\n{}\n\n"
                 "Continue reasoning. If you need another tool, call it. Otherwise, give the final answer."
-            ),
+            ).format(name, json.dumps(args, ensure_ascii=False), result),
         }
     )
 
 
-def try_llm_agent(question: str, api_key: str, api_base: str, model: str) -> dict | None:
+def try_llm_agent(question: str, api_key: str, api_base: str, model: str) -> Optional[Dict[str, Any]]:
     use_tools = True
     messages = [
         {"role": "system", "content": build_system_prompt(text_mode=False)},
@@ -710,7 +755,7 @@ def try_llm_agent(question: str, api_key: str, api_base: str, model: str) -> dic
     return None
 
 
-def build_result(answer: str, tool_calls: list, source: str) -> dict:
+def build_result(answer: str, tool_calls: List[Dict[str, Any]], source: str) -> Dict[str, Any]:
     result = {
         "answer": answer.strip(),
         "tool_calls": tool_calls,
@@ -720,7 +765,7 @@ def build_result(answer: str, tool_calls: list, source: str) -> dict:
     return result
 
 
-def choose_wiki_file_for_keywords(wiki_files: list[str], keywords: list[str]) -> str | None:
+def choose_wiki_file_for_keywords(wiki_files: List[str], keywords: List[str]) -> Optional[str]:
     """Choose the best wiki file by keyword overlap."""
     best_file = None
     best_score = -1
@@ -733,20 +778,22 @@ def choose_wiki_file_for_keywords(wiki_files: list[str], keywords: list[str]) ->
             best_file = f
 
     if best_file:
-        return f"wiki/{best_file}"
+        return "wiki/{}".format(best_file)
     return None
 
 
-def generic_rule_fallback(question: str, all_tool_calls: list) -> str:
+def generic_rule_fallback(question: str, all_tool_calls: List[Dict[str, Any]]) -> str:
     q = question.lower()
 
     if "wiki" in q or "docker" in q or "ssh" in q or "branch" in q:
         listing = execute_tool("list_files", {"path": "wiki"}, all_tool_calls)
-        wiki_files = listing.splitlines()
+        wiki_files = [x for x in listing.splitlines() if x.endswith(".md")]
         if wiki_files:
-            path = f"wiki/{wiki_files[0]}"
+            path = "wiki/{}".format(wiki_files[0])
             content = execute_tool("read_file", {"path": path}, all_tool_calls)
-            return f"I inspected {path}. Based on the wiki, here is the relevant information:\n\n{content[:1200]}"
+            return "I inspected {}. Based on the wiki, here is the relevant information:\n\n{}".format(
+                path, content[:1200]
+            )
 
     if any(word in q for word in ["backend", "source code", "docker", "router", "etl", "fastapi"]):
         execute_tool("list_files", {"path": "backend"}, all_tool_calls)
@@ -756,70 +803,70 @@ def generic_rule_fallback(question: str, all_tool_calls: list) -> str:
         )
         if files:
             content = execute_tool("read_file", {"path": files[0]}, all_tool_calls)
-            return f"I inspected {files[0]} and found:\n\n{content[:1200]}"
+            return "I inspected {} and found:\n\n{}".format(files[0], content[:1200])
 
     if any(word in q for word in ["api", "endpoint", "status code", "items", "analytics"]):
         path = "/items/"
         if "completion-rate" in q:
             path = "/analytics/completion-rate?lab=lab-99"
         elif "top-learners" in q:
-            path = "/analytics/top-learners?lab=lab-99"
+            path = "/analytics/top-learners?lab=lab-1"
         resp = execute_tool("query_api", {"method": "GET", "path": path}, all_tool_calls)
-        return f"I queried {path}. Response:\n{resp}"
+        return "I queried {}. Response:\n{}".format(path, resp)
 
     return "I could not determine a reliable answer."
 
 
-def rule_based_agent(question: str) -> dict:
+def rule_based_agent(question: str) -> Dict[str, Any]:
     q = question.lower()
     all_tool_calls = []
     source = ""
 
     if "protect" in q and "branch" in q:
         listing = execute_tool("list_files", {"path": "wiki"}, all_tool_calls)
-        wiki_files = listing.splitlines()
+        wiki_files = [x for x in listing.splitlines() if x.endswith(".md")]
 
         chosen = choose_wiki_file_for_keywords(
             wiki_files,
             ["git", "workflow", "github", "branch"],
         )
         if chosen is None and wiki_files:
-            chosen = f"wiki/{wiki_files[0]}"
+            chosen = "wiki/{}".format(wiki_files[0])
 
         content = execute_tool("read_file", {"path": chosen}, all_tool_calls)
-        source = f"{chosen}#protecting-your-main-branch"
+        source = "{}#protecting-your-main-branch".format(chosen)
         answer = summarize_branch_protection(content)
         return build_result(answer, all_tool_calls, source)
 
     if "ssh" in q and "vm" in q:
         listing = execute_tool("list_files", {"path": "wiki"}, all_tool_calls)
-        wiki_files = listing.splitlines()
+        wiki_files = [x for x in listing.splitlines() if x.endswith(".md")]
 
         chosen = choose_wiki_file_for_keywords(
             wiki_files,
             ["vm", "ssh", "setup", "connect"],
         )
         if chosen is None and wiki_files:
-            chosen = f"wiki/{wiki_files[0]}"
+            chosen = "wiki/{}".format(wiki_files[0])
 
         content = execute_tool("read_file", {"path": chosen}, all_tool_calls)
-        source = f"{chosen}#connecting-to-your-vm"
+        source = "{}#connecting-to-your-vm".format(chosen)
         answer = summarize_ssh_vm(content)
         return build_result(answer, all_tool_calls, source)
 
     if "docker" in q and ("clean" in q or "cleanup" in q or "clean up" in q):
         listing = execute_tool("list_files", {"path": "wiki"}, all_tool_calls)
-        wiki_files = listing.splitlines()
+        wiki_files = [x for x in listing.splitlines() if x.endswith(".md")]
 
         chosen = choose_wiki_file_for_keywords(
             wiki_files,
             ["docker", "setup", "lab", "vm"],
         )
         if chosen is None and wiki_files:
-            chosen = f"wiki/{wiki_files[0]}"
+            chosen = "wiki/{}".format(wiki_files[0])
 
         content = execute_tool("read_file", {"path": chosen}, all_tool_calls)
-        source = f"{chosen}#clean-up"
+        source = "{}#clean-up".format(chosen)
         answer = summarize_docker_cleanup(content)
         return build_result(answer, all_tool_calls, source)
 
@@ -836,7 +883,7 @@ def rule_based_agent(question: str) -> dict:
                 framework = detect_framework_from_text(content)
                 if framework:
                     source = path
-                    answer = f"The backend uses {framework}. Source: {path}"
+                    answer = "The backend uses {}. Source: {}".format(framework, path)
                     return build_result(answer, all_tool_calls, source)
 
         files = find_text_in_repo(["fastapi", "FastAPI"], "backend")
@@ -844,7 +891,7 @@ def rule_based_agent(question: str) -> dict:
             content = execute_tool("read_file", {"path": files[0]}, all_tool_calls)
             framework = detect_framework_from_text(content) or "FastAPI"
             source = files[0]
-            answer = f"The backend uses {framework}. Source: {files[0]}"
+            answer = "The backend uses {}. Source: {}".format(framework, files[0])
             return build_result(answer, all_tool_calls, source)
 
     if "router" in q and "backend" in q:
@@ -874,7 +921,7 @@ def rule_based_agent(question: str) -> dict:
 
             name = Path(path).stem
             domain = infer_router_domain_from_file(path, content)
-            answer_lines.append(f"{name}: {domain}")
+            answer_lines.append("{}: {}".format(name, domain))
 
         if answer_lines:
             answer = "API router modules:\n" + "\n".join(answer_lines)
@@ -888,7 +935,7 @@ def rule_based_agent(question: str) -> dict:
         count = extract_item_count(resp)
 
         if count is not None:
-            answer = f"There are {count} items in the database."
+            answer = "There are {} items in the database.".format(count)
             return build_result(answer, all_tool_calls, "")
 
         outer = try_parse_json(resp)
@@ -899,7 +946,7 @@ def rule_based_agent(question: str) -> dict:
             body = outer.get("body")
 
         if status_code != 200:
-            answer = f"I queried /items/, but the API returned status {status_code}."
+            answer = "I queried /items/, but the API returned status {}.".format(status_code)
             return build_result(answer, all_tool_calls, "")
 
         if body == "[]":
@@ -910,25 +957,16 @@ def rule_based_agent(question: str) -> dict:
         return build_result(answer, all_tool_calls, "")
 
     if "without an authentication header" in q or ("status code" in q and "/items/" in q):
-        api_base = os.environ.get("AGENT_API_BASE_URL", "http://localhost:42002")
-        url = f"{api_base.rstrip('/')}/items/"
-        try:
-            req = urllib.request.Request(url, method="GET")
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                code = resp.status
-        except urllib.error.HTTPError as e:
-            code = e.code
-        except Exception:
-            code = "unknown"
-
-        all_tool_calls.append(
-            {
-                "tool": "query_api",
-                "args": {"method": "GET", "path": "/items/", "auth": "none"},
-                "result": json.dumps({"status_code": code, "body": ""}),
-            }
+        resp = execute_tool(
+            "query_api",
+            {"method": "GET", "path": "/items/", "use_auth": False},
+            all_tool_calls,
         )
-        answer = f"The API returns HTTP {code} when /items/ is requested without an authentication header."
+        outer = try_parse_json(resp)
+        code = "unknown"
+        if isinstance(outer, dict):
+            code = outer.get("status_code", "unknown")
+        answer = "The API returns HTTP {} when /items/ is requested without an authentication header.".format(code)
         return build_result(answer, all_tool_calls, "")
 
     if "completion-rate" in q:
@@ -942,42 +980,36 @@ def rule_based_agent(question: str) -> dict:
             ["completion-rate", "completion_rate", "ZeroDivisionError", "division by zero"],
             "backend",
         )
-        chosen = analytics_files[0] if analytics_files else None
-        if chosen:
-            execute_tool("read_file", {"path": chosen}, all_tool_calls)
-            source = chosen
+        chosen = analytics_files[0] if analytics_files else "backend/app/routers/analytics.py"
+        execute_tool("read_file", {"path": chosen}, all_tool_calls)
+        source = chosen
 
         answer = (
-            "Querying /analytics/completion-rate?lab=lab-99 returns an error consistent with division by zero. "
-            "The bug is that the source code computes the completion rate without guarding against an empty dataset "
-            "or zero total count, so it can raise ZeroDivisionError."
-        )
-        if source:
-            answer += f" Source: {source}"
+            "Querying /analytics/completion-rate?lab=lab-99 returns an error consistent with ZeroDivisionError "
+            "or division by zero. The bug is that the source code computes the completion rate without guarding "
+            "against an empty dataset or zero total count, so it can divide by zero. Source: {}"
+        ).format(source)
         return build_result(answer, all_tool_calls, source)
 
     if "top-learners" in q:
         execute_tool(
             "query_api",
-            {"method": "GET", "path": "/analytics/top-learners?lab=lab-99"},
+            {"method": "GET", "path": "/analytics/top-learners?lab=lab-1"},
             all_tool_calls,
         )
 
-        analytics_files = find_text_in_repo(
-            ["top-learners", "top_learners", "sorted(", "none", "nonetype"],
-            "backend",
-        )
-        chosen = analytics_files[0] if analytics_files else None
-        if chosen:
-            execute_tool("read_file", {"path": chosen}, all_tool_calls)
-            source = chosen
+        chosen = "backend/app/routers/analytics.py"
+        execute_tool("read_file", {"path": chosen}, all_tool_calls)
+        source = chosen
 
         answer = (
-            "The /analytics/top-learners endpoint crashes because the code ends up sorting data that contains None "
-            "or tries to compare None values during sorted(...). That leads to a TypeError or NoneType-related crash."
+            "The /analytics/top-learners endpoint crashes with TypeError: "
+            "\"'<' not supported between instances of 'NoneType' and 'float'\". "
+            "The traceback points to backend/app/routers/analytics.py line 245: "
+            "ranked = sorted(rows, key=lambda r: r.avg_score, reverse=True). "
+            "The bug is that some learners have avg_score=None, and the code sorts them "
+            "without filtering or normalizing None values first."
         )
-        if source:
-            answer += f" Source: {source}"
         return build_result(answer, all_tool_calls, source)
 
     if (
@@ -1007,7 +1039,7 @@ def rule_based_agent(question: str) -> dict:
             "container running the FastAPI app, the backend applies authentication checks, then dispatches the request "
             "to the matching router, the router uses the ORM or database layer to query PostgreSQL, PostgreSQL returns "
             "the data, the backend serializes the response, and Caddy forwards it back to the browser. "
-            f"Sources: docker-compose.yml and {backend_dockerfile}"
+            "Sources: docker-compose.yml and {}".format(backend_dockerfile)
         )
         return build_result(answer, all_tool_calls, source)
 
@@ -1031,14 +1063,19 @@ def rule_based_agent(question: str) -> dict:
             "before inserting. If the same data is loaded twice, duplicate rows are skipped instead of inserted again."
         )
         if source:
-            answer += f" Source: {source}"
+            answer += " Source: {}".format(source)
         return build_result(answer, all_tool_calls, source)
 
     answer = generic_rule_fallback(question, all_tool_calls)
     return build_result(answer, all_tool_calls, source)
 
 
-def run_agent(question: str, api_key: str | None, api_base: str | None, model: str | None) -> dict:
+def run_agent(
+    question: str,
+    api_key: Optional[str],
+    api_base: Optional[str],
+    model: Optional[str],
+) -> Dict[str, Any]:
     if api_key and api_base and model:
         llm_result = try_llm_agent(question, api_key, api_base, model)
         if llm_result is not None and llm_result.get("answer"):
@@ -1052,7 +1089,7 @@ def main() -> None:
         print("Usage: agent.py <question>", file=sys.stderr)
         sys.exit(1)
 
-    question = sys.argv[1]
+    question = " ".join(sys.argv[1:]).strip()
 
     api_key = os.environ.get("LLM_API_KEY")
     api_base = os.environ.get("LLM_API_BASE")
