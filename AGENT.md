@@ -104,3 +104,40 @@ Tests in `tests/test_agent.py`:
 - Use a local mock HTTP server to simulate the LLM API
 - Set environment variables for the subprocess
 - Assert exit code 0, valid JSON, and required fields
+
+## Agent Architecture (Task 2)
+
+### Tools
+
+The agent supports two tools for accessing project documentation:
+
+| Tool | Description |
+|------|-------------|
+| `read_file(path)` | Read file contents relative to project root. Returns error if path is outside root or file doesn't exist. |
+| `list_files(path)` | List files/directories relative to project root. Returns newline-separated string. |
+
+### Agentic Loop
+
+1. Send user question + system prompt + tool schemas to LLM
+2. If LLM returns tool calls:
+   - Execute each tool locally
+   - Append tool results to conversation
+   - Repeat (max 10 iterations)
+3. When LLM returns text answer (no tool calls), return final JSON
+
+### Output Format (Task 2)
+
+```json
+{
+  "answer": "Final answer text",
+  "source": "wiki/git-workflow.md",
+  "tool_calls": [
+    {"tool": "list_files", "arguments": {"path": "wiki"}},
+    {"tool": "read_file", "arguments": {"path": "wiki/git-workflow.md"}}
+  ]
+}
+```
+
+### Security
+
+Both tools reject paths that traverse outside the project root (e.g., `../etc/passwd`).
