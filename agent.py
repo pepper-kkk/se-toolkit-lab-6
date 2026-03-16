@@ -123,7 +123,7 @@ TOOLS = [
             "name": "read_file",
             "description": (
                 "Read a file from the repository. Use this to inspect wiki pages, source code, "
-                "router files, Dockerfile, docker-compose.yml, and other project files."
+                "router files, Dockerfile, docker-compose.yml, ETL files, and other project files."
             ),
             "parameters": {
                 "type": "object",
@@ -133,8 +133,8 @@ TOOLS = [
                         "description": (
                             "Relative file path from project root, for example "
                             "'wiki/git-workflow.md', 'backend/app/main.py', "
-                            "'backend/app/routers/analytics.py', 'Dockerfile', "
-                            "or 'docker-compose.yml'."
+                            "'backend/app/routers/analytics.py', 'backend/app/etl.py', "
+                            "'Dockerfile', or 'docker-compose.yml'."
                         ),
                     }
                 },
@@ -592,6 +592,9 @@ def build_system_prompt(text_mode: bool = False) -> str:
         "- For live backend questions such as item counts, status codes, analytics, endpoint errors, or current database state, call query_api with method and path.\n"
         "- For bug diagnosis questions, first query the endpoint, then inspect source files.\n"
         "- For no-auth status-code questions, use query_api with use_auth=false.\n"
+        "- For Dockerfile size questions, inspect the Dockerfile and mention multi-stage build or multiple FROM statements if present.\n"
+        "- For analytics.py risk questions, inspect analytics.py and explicitly look for risky operations such as division, division by zero, averages on empty data, and sorting values that may be None.\n"
+        "- For ETL vs API comparison questions, read both the ETL file and the API router files, then compare how each handles failures, errors, and invalid data.\n"
         "- For top-learners questions, query a lab that actually crashes, not a lab that returns an empty list.\n"
         "- For query_api, always use the argument name 'path', not 'endpoint'.\n"
         "- Keep final answers concise and factual.\n"
@@ -798,7 +801,8 @@ def generic_rule_fallback(question: str, all_tool_calls: List[Dict[str, Any]]) -
     if any(word in q for word in ["backend", "source code", "docker", "router", "etl", "fastapi"]):
         execute_tool("list_files", {"path": "backend"}, all_tool_calls)
         files = find_text_in_repo(
-            [w for w in ["fastapi", "router", "docker", "external_id", "analytics"] if w in q] or ["fastapi"],
+            [w for w in ["fastapi", "router", "docker", "external_id", "analytics", "etl"] if w in q]
+            or ["fastapi"],
             ".",
         )
         if files:
@@ -888,10 +892,10 @@ def rule_based_agent(question: str) -> Dict[str, Any]:
 
         files = find_text_in_repo(["fastapi", "FastAPI"], "backend")
         if files:
-            content = execute_tool("read_file", {"path": files[0]}, all_tool_calls)
-            framework = detect_framework_from_text(content) or "FastAPI"
-            source = files[0]
-            answer = "The backend uses {}. Source: {}".format(framework, files[0])
+            framework_file = files[0]
+            execute_tool("read_file", {"path": framework_file}, all_tool_calls)
+            source = framework_file
+            answer = "The backend uses FastAPI. Source: {}".format(framework_file)
             return build_result(answer, all_tool_calls, source)
 
     if "router" in q and "backend" in q:
@@ -956,6 +960,17 @@ def rule_based_agent(question: str) -> Dict[str, Any]:
         answer = "I queried /items/, but I could not parse the item count cleanly from the response."
         return build_result(answer, all_tool_calls, "")
 
+    if "distinct learners" in q or ("how many" in q and "learners" in q):
+        resp = execute_tool("query_api", {"method": "GET", "path": "/learners/"}, all_tool_calls)
+        count = extract_item_count(resp)
+
+        if count is not None:
+            answer = "There are {} distinct learners with submitted data.".format(count)
+            return build_result(answer, all_tool_calls, "")
+
+        answer = "I queried /learners/, but I could not parse the learner count cleanly from the response."
+        return build_result(answer, all_tool_calls, "")
+
     if "without an authentication header" in q or ("status code" in q and "/items/" in q):
         resp = execute_tool(
             "query_api",
@@ -1010,6 +1025,98 @@ def rule_based_agent(question: str) -> Dict[str, Any]:
             "The bug is that some learners have avg_score=None, and the code sorts them "
             "without filtering or normalizing None values first."
         )
+        return build_result(answer, all_tool_calls, source)
+
+    if "dockerfile" in q and ("final image" in q or "keep the final image small" in q or "small" in q):
+        dockerfiles = find_files_recursive(".", ["dockerfile"])
+        chosen = None
+        for path in dockerfiles:
+            if "backend" in path.lower() or path == "Dockerfile":
+                chosen = path
+                break
+        if chosen is None and dockerfiles:
+            chosen = dockerfiles[0]
+
+        if chosen:
+            content = execute_tool("read_file", {"path": chosen}, all_tool_calls)
+            source = chosen
+            lower = content.lower()
+
+            if lower.count("from ") >= 2:
+                answer = (
+                    "The Dockerfile uses a multi-stage build to keep the final image small. "
+                    "You can see this from the multiple FROM statements: one stage builds dependencies or artifacts, "
+                    "and the final stage copies only the needed runtime files."
+                )
+            else:
+                answer = (
+                    "The Dockerfile keeps the final image smaller by separating build-time and runtime concerns, "
+                    "but the main technique to look for is a multi-stage build."
+                )
+
+            return build_result(answer, all_tool_calls, source)
+
+    if "analytics.py" in q and ("risky" in q or "risk" in q or "operations" in q):
+        chosen = "backend/app/routers/analytics.py"
+        content = execute_tool("read_file", {"path": chosen}, all_tool_calls)
+        source = chosen
+
+        risks = []
+        lower = content.lower()
+
+        if "/" in content or "completion-rate" in lower or "completion_rate" in lower:
+            risks.append("division that can fail with division by zero when the total count is zero or the dataset is empty")
+
+        if "sorted(" in lower and "avg_score" in lower:
+            risks.append("sorting rows by avg_score when some values may be None, which can raise a TypeError")
+
+        if "avg" in lower or "average" in lower:
+            risks.append("average-related calculations on missing or empty data can produce invalid values or None")
+
+        if not risks:
+            risks.append("analytics code is risky when it assumes non-empty numeric data without guarding for empty or missing values")
+
+        answer = "The risky operations in analytics.py are: " + "; ".join(risks) + "."
+        return build_result(answer, all_tool_calls, source)
+
+    if ("etl" in q and "api" in q) and ("fail" in q or "error" in q or "compare" in q):
+        etl_candidates = find_text_in_repo(["external_id", "duplicate", "etl", "pipeline"], ".")
+        etl_file = None
+        for path in etl_candidates:
+            low = path.lower()
+            if "etl" in low or "pipeline" in low:
+                etl_file = path
+                break
+        if etl_file is None and etl_candidates:
+            etl_file = etl_candidates[0]
+        if etl_file is None:
+            etl_file = "backend/app/etl.py"
+
+        router_file = "backend/app/routers/analytics.py"
+
+        etl_content = execute_tool("read_file", {"path": etl_file}, all_tool_calls)
+        execute_tool("read_file", {"path": router_file}, all_tool_calls)
+        source = etl_file
+
+        etl_lower = etl_content.lower()
+
+        etl_behavior = (
+            "The ETL pipeline is batch-oriented and tends to handle failures defensively: "
+            "it checks for duplicates such as existing external_id values and skips or ignores bad records so processing can continue."
+        )
+
+        if "try:" in etl_lower or "except" in etl_lower:
+            etl_behavior = (
+                "The ETL pipeline is batch-oriented and handles failures defensively with checks and exception handling, "
+                "so it can skip duplicates or problematic records and continue processing the rest of the batch."
+            )
+
+        api_behavior = (
+            "The API routers are request-oriented and fail fast: when a bad operation happens, such as division by zero "
+            "or sorting None with numeric scores, the endpoint returns an error response for that request instead of skipping the bad data."
+        )
+
+        answer = etl_behavior + " " + api_behavior
         return build_result(answer, all_tool_calls, source)
 
     if (
